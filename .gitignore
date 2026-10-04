@@ -1,0 +1,30 @@
+# Secrets: Telegram bot token, Gemini API key
+.env
+.env.*
+
+# Real users' memory, logs and state
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.coverage
+htmlcov/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Raw brainstorming chat: contains personal data, local only
+docs/gemini_chat_*.md
