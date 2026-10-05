@@ -8,13 +8,23 @@ is a general-purpose assistant. When one partner asks it to tell the other somet
 calls `send_to_partner`: the message is translated so it lands for the other person, delivered
 to their chat immediately, and the sender sees the translation.
 
-**Nothing is written yet; the server is Python.** Read `docs/idea.md` at the start of the
-session: it holds the decisions so far (bot on a server, one bot and one memory per couple,
+**Stage 1 (single user) is in progress.** Read `docs/idea.md` at the start of the session: it
+holds the decisions so far (bot on a server, one bot and one memory per couple,
 `send_to_partner` without confirmation, cross-partner leakage accepted as a conscious risk,
-couples-only MVP, Telegram bot as the recommended first client, hosting on a laptop then a VPS
-with Cloud Run as a possible later migration, Gemini 3.8+ Flash as the LLM, stage 1 single user
-/ stage 2 couple), privacy deliberately deferred to stage 2, and the open questions. Settle
-those with the user before writing code, then update this section.
+couples-only MVP, Telegram bot as the first real client, hosting on a laptop then a VPS with
+Cloud Run as a possible later migration, Gemini 3.8+ Flash as the LLM, stage 1 single user /
+stage 2 couple, the preliminary tiered-memory design in section 11), privacy deliberately
+deferred to stage 2, and the open questions. Settle open questions with the user before coding
+them, and keep this section current.
+
+Code: the library is `src/kamerdyner/` (messages, users, conversation log on disk, compaction
+policy, memory, prompt assembly, the LLM boundary with its Gemini implementation, `Chat` tying
+them together); programs are thin assemblies in `src/kamerdyner/apps/` (now: `console`; next:
+Telegram). Memory is still `EmptyMemory`.
+
+Environment: conda env `kamerdyner` from `environment.yml`; every dependency is declared in
+`pyproject.toml`. Run the checks inside it: `pytest`, `pyright` (strict), `ruff format`,
+`ruff check`. Without the env activated, pyright resolves imports against the wrong Python.
 
 `docs/gemini_chat_2026-10-02.md` is the original brainstorming chat with Gemini (~450 KB — grep
 it, don't read it whole). It is raw input, not a spec: several of its choices are deliberately

@@ -64,6 +64,18 @@ the same language but hear it differently.
 
 ## Status
 
-Early stage: the idea and the architecture are worked out, and the code is not written yet. The
-design notes, decisions, accepted risks and open questions are in
-[`docs/idea.md`](docs/idea.md) (in Ukrainian).
+Stage 1 in progress: a console chat with one user on top of the library. The conversation is
+stored and trimmed at 16K tokens; the memory that will absorb the trimmed part is a placeholder
+that remembers nothing yet. The design notes, decisions, accepted risks and open questions are
+in [`docs/idea.md`](docs/idea.md) (in Ukrainian).
+
+## Running
+
+```sh
+conda env create -f environment.yml && conda activate kamerdyner
+cp .env.example .env                    # fill in GEMINI_API_KEY and GEMINI_MODEL
+mkdir -p data && cp users.example.toml data/users.toml
+python -m kamerdyner.apps.console marta
+```
+
+Checks: `pytest`, `pyright`, `ruff check`, `ruff format --check`.

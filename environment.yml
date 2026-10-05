@@ -1,0 +1,11 @@
+# Development environment: conda env create -f environment.yml && conda activate kamerdyner
+# Conda provides only the interpreter; every dependency, runtime and dev (Node.js for pyright
+# included), is declared in pyproject.toml and installed from it.
+name: kamerdyner
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - pip
+  - pip:
+      - --editable .[dev]
