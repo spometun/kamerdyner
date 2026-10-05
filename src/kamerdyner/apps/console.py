@@ -1,10 +1,10 @@
 """Console chat: one user talks to the assistant in the terminal.
 
-    python -m kamerdyner.apps.console <user_id> [--data DIR]
+    python -m kamerdyner.apps.console <user directory>
 
-Reads GEMINI_API_KEY and GEMINI_MODEL from the environment or `.env`, users from
-`<data>/users.toml`, and keeps each user's conversation in `<data>/<user_id>/`. The log of the
-program goes to `<data>/console.log`. Ctrl+D or Ctrl+C ends the chat.
+The user directory holds everything about the user: `user.toml` with their settings, the
+conversation, and `console.log`, the log of this program. GEMINI_API_KEY and GEMINI_MODEL come
+from the environment or `.env`. Ctrl+D or Ctrl+C ends the chat.
 """
 
 import argparse
@@ -25,30 +25,24 @@ from kamerdyner.memory import EmptyMemory
 from kamerdyner.messages import utc_now
 from kamerdyner.store import ConversationLog
 from kamerdyner.tokens import ApproximateTokenCounter
-from kamerdyner.users import load_users
+from kamerdyner.users import load_user
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Chat with Kamerdyner in the terminal.")
-    parser.add_argument("user_id", help="a user from <data>/users.toml")
-    parser.add_argument("--data", type=Path, default=Path("data"), help="data directory")
+    parser.add_argument("directory", type=Path, help="the user's directory, with user.toml")
     args = parser.parse_args()
-    data: Path = args.data
-    user_id: str = args.user_id
+    directory: Path = args.directory
 
-    users_path = data / "users.toml"
     try:
-        users = load_users(users_path)
-    except FileNotFoundError:
-        parser.error(f"no users file {users_path}, copy users.example.toml there")
-    if user_id not in users:
-        parser.error(f"unknown user {user_id!r}, {users_path} has {sorted(users)}")
-    user = users[user_id]
+        user = load_user(directory)
+    except FileNotFoundError as error:
+        parser.error(f"no {error.filename}, copy user.example.toml there")
 
     load_dotenv()
     api_key = _required_env(parser, "GEMINI_API_KEY")
     model = _required_env(parser, "GEMINI_MODEL")
-    log_path = data / "console.log"
+    log_path = directory / "console.log"
     logging.basicConfig(
         filename=log_path,
         level=logging.INFO,
@@ -57,8 +51,7 @@ def main() -> None:
 
     client = make_client(api_key, timeout_seconds=120, attempts=3)
     llm = GeminiLLM(client, model, types.ThinkingLevel.LOW)
-    user_directory = data / user.id
-    log = ConversationLog(user_directory)
+    log = ConversationLog(directory)
     memory = EmptyMemory()
     counter = ApproximateTokenCounter()
     policy = SizeThresholdPolicy(counter, limit_tokens=16_000, min_compress_tokens=8_000)

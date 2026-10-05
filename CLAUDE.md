@@ -20,7 +20,8 @@ them, and keep this section current.
 Code: the library is `src/kamerdyner/` (messages, users, conversation log on disk, compaction
 policy, memory, prompt assembly, the LLM boundary with its Gemini implementation, `Chat` tying
 them together); programs are thin assemblies in `src/kamerdyner/apps/` (now: `console`; next:
-Telegram). Memory is still `EmptyMemory`.
+Telegram). Memory is still `EmptyMemory`. A user is a directory holding everything of theirs:
+`user.toml` (name, timezone), the conversation, later the memory.
 
 Environment: conda env `kamerdyner` from `environment.yml`; every dependency is declared in
 `pyproject.toml`. Run the checks inside it: `pytest`, `pyright` (strict), `ruff format`,

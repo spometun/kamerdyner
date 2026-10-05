@@ -74,8 +74,8 @@ in [`docs/idea.md`](docs/idea.md) (in Ukrainian).
 ```sh
 conda env create -f environment.yml && conda activate kamerdyner
 cp .env.example .env                    # fill in GEMINI_API_KEY and GEMINI_MODEL
-mkdir -p data && cp users.example.toml data/users.toml
-python -m kamerdyner.apps.console marta
+mkdir -p data/marta && cp user.example.toml data/marta/user.toml
+python -m kamerdyner.apps.console data/marta
 ```
 
 Checks: `pytest`, `pyright`, `ruff check`, `ruff format --check`.

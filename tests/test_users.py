@@ -3,38 +3,32 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from kamerdyner.users import User, load_users
+from kamerdyner.users import User, load_user
 
 
-def test_loads_users_from_toml(tmp_path: Path) -> None:
-    path = tmp_path / "users.toml"
-    path.write_text(
-        '[andriy]\nname = "Андрій"\ntimezone = "America/Toronto"\n\n'
-        '[marta]\nname = "Марта"\ntimezone = "Europe/Kyiv"\n',
-        encoding="utf-8",
+def test_user_is_read_from_their_directory(tmp_path: Path) -> None:
+    directory = tmp_path / "marta"
+    directory.mkdir()
+    (directory / "user.toml").write_text(
+        'name = "Марта"\ntimezone = "Europe/Kyiv"\n', encoding="utf-8"
     )
 
-    users = load_users(path)
+    user = load_user(directory)
 
-    toronto = ZoneInfo("America/Toronto")
     kyiv = ZoneInfo("Europe/Kyiv")
-    assert users == {
-        "andriy": User(id="andriy", name="Андрій", timezone=toronto),
-        "marta": User(id="marta", name="Марта", timezone=kyiv),
-    }
+    assert user == User(id="marta", name="Марта", timezone=kyiv)
 
 
 @pytest.mark.parametrize(
-    ("entry", "complaint"),
+    ("settings", "complaint"),
     [
-        ('[marta]\ntimezone = "Europe/Kyiv"\n', "needs string 'name'"),
-        ('[marta]\nname = "Марта"\ntimezone = "Mars/Olympus"\n', "unknown timezone"),
-        ('[Marta]\nname = "Марта"\ntimezone = "Europe/Kyiv"\n', "User id must match"),
+        ('timezone = "Europe/Kyiv"\n', "needs string 'name'"),
+        ('name = "Марта"\ntimezone = "Mars/Olympus"\n', "unknown timezone"),
+        ('name = " "\ntimezone = "Europe/Kyiv"\n', "empty name"),
     ],
 )
-def test_rejects_bad_entries(tmp_path: Path, entry: str, complaint: str) -> None:
-    path = tmp_path / "users.toml"
-    path.write_text(entry, encoding="utf-8")
+def test_rejects_bad_settings(tmp_path: Path, settings: str, complaint: str) -> None:
+    (tmp_path / "user.toml").write_text(settings, encoding="utf-8")
 
     with pytest.raises(ValueError, match=complaint):
-        load_users(path)
+        load_user(tmp_path)

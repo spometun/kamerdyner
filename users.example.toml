@@ -1,9 +1,0 @@
-# Copy to data/users.toml. One table per user, keyed by the user id (lowercase letters, digits,
-# "-" and "_"); the id names the user's directory under data/.
-[andriy]
-name = "Андрій"
-timezone = "America/Toronto"
-
-[marta]
-name = "Марта"
-timezone = "America/Toronto"
