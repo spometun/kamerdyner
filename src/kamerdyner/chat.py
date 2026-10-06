@@ -8,7 +8,7 @@ from kamerdyner.llm import LLM, GenerateResult, Incomplete, Reply, Unavailable
 from kamerdyner.memory import Memory
 from kamerdyner.messages import Clock, Message, Role
 from kamerdyner.prompt import build_prompt
-from kamerdyner.store import ConversationLog
+from kamerdyner.store import ConversationLog, CurrentConversation
 from kamerdyner.users import User
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ class Chat:
         self,
         user: User,
         log: ConversationLog,
+        current: CurrentConversation,
         memory: Memory,
         policy: CompactionPolicy,
         llm: LLM,
@@ -32,6 +33,7 @@ class Chat:
     ) -> None:
         self._user = user
         self._log = log
+        self._current = current
         self._memory = memory
         self._policy = policy
         self._llm = llm
@@ -43,15 +45,16 @@ class Chat:
         received_at = self._clock()
         incoming = Message(role=Role.USER, text=text, at=received_at)
         self._log.append(incoming)
-        recent = self._log.recent()
+        self._current.append(incoming)
         memory = self._memory.content()
-        prompt = build_prompt(self._user, memory, recent)
+        prompt = build_prompt(self._user, memory, self._current.messages)
         result = await self._llm.generate(prompt)
         match result:
             case Reply(text=reply_text):
                 answered_at = self._clock()
                 reply = Message(role=Role.MODEL, text=reply_text, at=answered_at)
                 self._log.append(reply)
+                self._current.append(reply)
             case Incomplete(reason=reason):
                 logger.warning("Incomplete reply for user %s: %s", self._user.id, reason)
             case Unavailable(detail=detail):
@@ -63,15 +66,20 @@ class Chat:
     async def compact(self) -> None:
         """Moves the oldest part of the conversation into memory if the policy says so."""
         now = self._clock()
-        recent = self._log.recent()
-        plan = self._policy.plan(recent, now)
+        plan = self._policy.plan(self._current.messages, now)
         match plan:
             case NoAction():
                 pass
-            case Compact(to_compress=to_compress):
-                count = len(to_compress)
+            case Compact(to_compress=to_compress, to_keep=to_keep):
+                moved = len(to_compress)
+                remaining = len(to_keep)
                 await self._memory.absorb(to_compress)
-                self._log.fold(count)
-                logger.info("Folded %d messages of user %s into memory", count, self._user.id)
+                self._current.replace(to_keep)
+                logger.info(
+                    "Moved %d messages of user %s into memory, %d remain",
+                    moved,
+                    self._user.id,
+                    remaining,
+                )
             case _:
                 assert_never(plan)

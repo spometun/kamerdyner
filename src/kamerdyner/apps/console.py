@@ -2,9 +2,9 @@
 
     python -m kamerdyner.apps.console <user directory>
 
-The user directory holds everything about the user: `user.toml` with their settings, the
-conversation, and `console.log`, the log of this program. GEMINI_API_KEY and GEMINI_MODEL come
-from the environment or `.env`. Ctrl+D or Ctrl+C ends the chat.
+The user directory holds everything about the user: `user.toml` with their settings, and in
+`log/` the conversation and `console.log`, the log of this program. GEMINI_API_KEY and
+GEMINI_MODEL come from the environment or `.env`. Ctrl+D or Ctrl+C ends the chat.
 """
 
 import argparse
@@ -23,7 +23,7 @@ from kamerdyner.llm import GenerateResult, Incomplete, Reply, Unavailable
 from kamerdyner.llm.gemini import GeminiLLM, make_client
 from kamerdyner.memory import EmptyMemory
 from kamerdyner.messages import utc_now
-from kamerdyner.store import ConversationLog
+from kamerdyner.store import ConversationLog, CurrentConversation
 from kamerdyner.tokens import ApproximateTokenCounter
 from kamerdyner.users import load_user
 
@@ -42,7 +42,9 @@ def main() -> None:
     load_dotenv()
     api_key = _required_env(parser, "GEMINI_API_KEY")
     model = _required_env(parser, "GEMINI_MODEL")
-    log_path = directory / "console.log"
+    log_directory = directory / "log"
+    log_directory.mkdir(exist_ok=True)
+    log_path = log_directory / "console.log"
     logging.basicConfig(
         filename=log_path,
         level=logging.INFO,
@@ -51,11 +53,12 @@ def main() -> None:
 
     client = make_client(api_key, timeout_seconds=120, attempts=3)
     llm = GeminiLLM(client, model, types.ThinkingLevel.LOW)
-    log = ConversationLog(directory)
+    log = ConversationLog(log_directory)
+    current = CurrentConversation(log_directory)
     memory = EmptyMemory()
     counter = ApproximateTokenCounter()
     policy = SizeThresholdPolicy(counter, limit_tokens=16_000, min_compress_tokens=8_000)
-    chat = Chat(user, log, memory, policy, llm, utc_now)
+    chat = Chat(user, log, current, memory, policy, llm, utc_now)
 
     print(f"Kamerdyner — {user.name}. Ctrl+D to quit.")
     with asyncio.Runner() as runner:

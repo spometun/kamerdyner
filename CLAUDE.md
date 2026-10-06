@@ -21,7 +21,9 @@ Code: the library is `src/kamerdyner/` (messages, users, conversation log on dis
 policy, memory, prompt assembly, the LLM boundary in `llm/` with one module per provider (now
 `llm/gemini.py`), `Chat` tying them together); programs are thin assemblies in `src/kamerdyner/apps/` (now: `console`; next:
 Telegram). Memory is still `EmptyMemory`. A user is a directory holding everything of theirs:
-`user.toml` (name, timezone), the conversation, later the memory.
+`user.toml` (name, timezone), later the memory, and `log/` with `log.jsonl` (the append-only
+archive, never read on the way to the model), `current.json` (the current conversation, what the
+model sees) and the program's log.
 
 Environment: conda env `kamerdyner` from `environment.yml`; every dependency is declared in
 `pyproject.toml`. Run the checks inside it: `pytest`, `pyright` (strict), `ruff format`,
@@ -94,15 +96,14 @@ not be papered over. Keep the two strictly apart.
   reason never to catch `BaseException`; if you catch it for cleanup, re-raise it.
 - **Retries are bounded and deliberate.** Retry only what is idempotent and transient (429, 503,
   timeouts), with backoff and a cap, and say so at the call site. Work that can be delivered
-  twice is made idempotent by an id: a Telegram `update_id` already processed is dropped, and
-  the memory-update pass advances a watermark so a message is folded into memory exactly once.
+  twice is made idempotent by an id: a Telegram `update_id` already processed is dropped.
 - **Treat everything that arrives from outside as untrusted input.** A Telegram update, a
   model's tool call and its arguments, a model's memory-update output (later: a message from the
   partner's side): validate its shape where it enters, reject what is out of contract with a
   logged reason, never crash on it and never let it reach code that assumes it is well-formed.
   Model output is not our code.
 - **Survive process death.** Anything the user would be upset to lose (an incoming message, an
-  updated profile, the memory-pass watermark) is persisted before we depend on it, not held only
+  updated profile, the current conversation) is persisted before we depend on it, not held only
   in memory: an incoming message goes to the log before the model is called. Files are written
   atomically (write a temp file, then `os.replace`), so a crash never leaves a half-written
   profile.

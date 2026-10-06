@@ -51,8 +51,7 @@ the same language but hear it differently.
 - **Model output is untrusted input.** Tool calls and memory updates are validated where they
   enter the system.
 - **Survives process death.** Incoming messages are persisted before the model is called, files
-  are written atomically, and the memory pass advances a watermark so each message is folded in
-  exactly once.
+  are written atomically, and the conversation is cut only after memory is saved.
 - **Strict typing and deterministic tests**: an injected clock and seeded randomness.
 
 ## Roadmap

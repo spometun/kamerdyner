@@ -1,4 +1,4 @@
 # Copy to <user directory>/user.toml, e.g. data/marta/user.toml. The directory name is the
-# user's id; the conversation is kept next to this file.
+# user's id; the conversation is kept in its log/ subdirectory.
 name = "Марта"
 timezone = "America/Toronto"
