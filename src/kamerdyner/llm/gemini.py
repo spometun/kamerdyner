@@ -81,9 +81,7 @@ def _result(response: types.GenerateContentResponse) -> GenerateResult:
 
 def _log_usage(response: types.GenerateContentResponse) -> None:
     usage = response.usage_metadata
-    if usage is None:
-        logger.warning("Gemini response without usage metadata")
-        return
+    assert usage is not None, f"Unexpected Gemini response without usage metadata: {response!r}"
     logger.info(
         "Gemini tokens: prompt %s (cached %s), thoughts %s, output %s",
         usage.prompt_token_count,

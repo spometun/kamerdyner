@@ -37,12 +37,10 @@ def test_memory_goes_into_the_system_instruction() -> None:
     user = make_user()
     question = make_message(Role.USER, "Що я люблю?")
 
-    with_memory = build_prompt(user, "Любить каву без цукру.", [question])
-    without_memory = build_prompt(user, "", [question])
+    prompt = build_prompt(user, "Любить каву без цукру.", [question])
 
-    assert "Марта" in with_memory.system_instruction
-    assert with_memory.system_instruction.endswith("Любить каву без цукру.")
-    assert "remember" not in without_memory.system_instruction
+    assert "Марта" in prompt.system_instruction
+    assert prompt.system_instruction.endswith("Любить каву без цукру.")
 
 
 @pytest.mark.parametrize(

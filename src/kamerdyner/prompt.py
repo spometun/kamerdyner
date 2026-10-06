@@ -49,9 +49,8 @@ _MEMORY_SECTION = """
 
 def _system_instruction(user: User, memory: str) -> str:
     instruction = _INSTRUCTION.format(name=user.name)
-    if memory:
-        instruction += _MEMORY_SECTION.format(name=user.name, memory=memory)
-    return instruction
+    memory_section = _MEMORY_SECTION.format(name=user.name, memory=memory)
+    return instruction + memory_section
 
 
 def _turns(messages: Sequence[Message], timezone: ZoneInfo) -> tuple[Turn, ...]:

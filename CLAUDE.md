@@ -91,6 +91,14 @@ not be papered over. Keep the two strictly apart.
   ordinary code — that turns our bugs into silent wrong behaviour. The only broad catch is a
   top-level boundary (one per Telegram update handler, one per background task) that logs the
   traceback (`logger.exception`) and tells the user something went wrong.
+- **The unexpected never passes silently; the expected is handled in plain sight.** Before
+  writing a guard, decide whether the situation can legitimately happen. If it cannot (a
+  response missing a field the API always sends, a value that is always present), `assert` it —
+  never `if x is None: log a warning; return`, and never branch around it as if it were optional
+  (memory always exists, possibly empty: add its section unconditionally, no `if memory:`). If
+  it can (a reply cut off, a model that is unavailable, a new user with no files yet), give it
+  its own explicit case and handle it — e.g. `case Incomplete(reason=reason):` logging a warning
+  and showing the user a message.
 - **Never swallow `asyncio.CancelledError`.** Cancellation travels as an exception; a handler
   that eats it breaks structured concurrency. It derives from `BaseException`, which is one more
   reason never to catch `BaseException`; if you catch it for cleanup, re-raise it.
