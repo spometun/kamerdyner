@@ -19,8 +19,8 @@ from google.genai import types
 
 from kamerdyner.chat import Chat
 from kamerdyner.compaction import SizeThresholdPolicy
-from kamerdyner.gemini import GeminiLLM, make_client
 from kamerdyner.llm import GenerateResult, Incomplete, Reply, Unavailable
+from kamerdyner.llm.gemini import GeminiLLM, make_client
 from kamerdyner.memory import EmptyMemory
 from kamerdyner.messages import utc_now
 from kamerdyner.store import ConversationLog

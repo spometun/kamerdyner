@@ -1,8 +1,9 @@
+"""The mapping from SDK responses to results, tested directly, without a network call."""
+
 from google.genai import types
 
-# The mapping from SDK responses to results is tested directly, without a network call.
-from kamerdyner.gemini import _result  # pyright: ignore[reportPrivateUsage]
 from kamerdyner.llm import Incomplete, Reply
+from kamerdyner.llm.gemini import _result  # pyright: ignore[reportPrivateUsage]
 
 
 def _response(text: str, finish_reason: types.FinishReason) -> types.GenerateContentResponse:

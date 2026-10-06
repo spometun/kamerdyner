@@ -18,8 +18,8 @@ deferred to stage 2, and the open questions. Settle open questions with the user
 them, and keep this section current.
 
 Code: the library is `src/kamerdyner/` (messages, users, conversation log on disk, compaction
-policy, memory, prompt assembly, the LLM boundary with its Gemini implementation, `Chat` tying
-them together); programs are thin assemblies in `src/kamerdyner/apps/` (now: `console`; next:
+policy, memory, prompt assembly, the LLM boundary in `llm/` with one module per provider (now
+`llm/gemini.py`), `Chat` tying them together); programs are thin assemblies in `src/kamerdyner/apps/` (now: `console`; next:
 Telegram). Memory is still `EmptyMemory`. A user is a directory holding everything of theirs:
 `user.toml` (name, timezone), the conversation, later the memory.
 

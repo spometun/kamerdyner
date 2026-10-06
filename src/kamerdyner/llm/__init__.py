@@ -1,4 +1,7 @@
-"""The boundary with the language model: what a request to it is and what can come back."""
+"""The boundary with the language model: what a request to it is and what can come back.
+
+Each provider implements `LLM` in its own module of this package (`gemini`); everything that
+is specific to a provider stays inside its module."""
 
 from dataclasses import dataclass
 from typing import Protocol
