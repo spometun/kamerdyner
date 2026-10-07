@@ -4,7 +4,7 @@
 
 The user directory holds everything about the user: `user.toml` with their settings, and in
 `log/` the conversation and `console.log`, the log of this program. GEMINI_API_KEY and
-GEMINI_MODEL come from the environment or `.env`. Ctrl+D or Ctrl+C ends the chat.
+GEMINI_MODEL come from the environment or `.env`. /exit, Ctrl+D or Ctrl+C ends the chat.
 
 A line starting with "/" is a command, not a message to the assistant; see `_COMMANDS`.
 """
@@ -71,7 +71,7 @@ def main() -> None:
     on_request = ShareCompactionPolicy(counter, share=0.5)
     chat = Chat(user, log, current, memory, llm, utc_now)
 
-    print(f"Kamerdyner — {user.name}. Ctrl+D to quit, /help for commands.")
+    print(f"Kamerdyner — {user.name}. /exit or Ctrl+D to quit, /help for commands.")
     with asyncio.Runner() as runner:
         while True:
             try:
@@ -82,7 +82,9 @@ def main() -> None:
             if not text.strip():
                 continue
             if text.startswith("/"):
-                _run_command(text, runner, chat, on_request, counter)
+                keep_going = _run_command(text, runner, chat, on_request, counter)
+                if not keep_going:
+                    break
                 continue
             sending = chat.send(text)
             result = runner.run(sending)
@@ -101,6 +103,7 @@ def main() -> None:
 _COMMANDS = {
     "/compact": "move at least half of the current conversation into memory, oldest first",
     "/help": "list the commands",
+    "/exit": "end the chat",
 }
 
 
@@ -110,7 +113,8 @@ def _run_command(
     chat: Chat,
     policy: CompactionPolicy,
     counter: TokenCounter,
-) -> None:
+) -> bool:
+    """Runs a console command; returns False when the chat should end."""
     match command.strip():
         case "/compact":
             compacting = chat.compact(policy)
@@ -120,8 +124,11 @@ def _run_command(
             print()
             for name, description in _COMMANDS.items():
                 print(f"{name:10} {description}")
+        case "/exit":
+            return False
         case unknown:
             print(f"\n[unknown command {unknown!r}, /help lists the commands]")
+    return True
 
 
 def _show_compaction(plan: CompactionPlan, counter: TokenCounter) -> None:
