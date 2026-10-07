@@ -3,7 +3,6 @@
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Protocol
 
 from kamerdyner.messages import Message, Role
@@ -31,7 +30,7 @@ type CompactionPlan = NoAction | Compact
 
 
 class CompactionPolicy(Protocol):
-    def plan(self, messages: Sequence[Message], now: datetime) -> CompactionPlan: ...
+    def plan(self, messages: Sequence[Message]) -> CompactionPlan: ...
 
 
 @dataclass(frozen=True)
@@ -55,7 +54,7 @@ class SizeThresholdPolicy:
                 f"limit_tokens={self.limit_tokens}"
             )
 
-    def plan(self, messages: Sequence[Message], now: datetime) -> CompactionPlan:
+    def plan(self, messages: Sequence[Message]) -> CompactionPlan:
         total = conversation_tokens(messages, self.counter)
         if total < self.limit_tokens:
             return NoAction()
@@ -74,7 +73,7 @@ class ShareCompactionPolicy:
         if not 0 < self.share <= 1:
             raise ValueError(f"Invalid input. share must be in (0, 1], got {self.share}")
 
-    def plan(self, messages: Sequence[Message], now: datetime) -> CompactionPlan:
+    def plan(self, messages: Sequence[Message]) -> CompactionPlan:
         if not messages:
             return NoAction()
         total = conversation_tokens(messages, self.counter)

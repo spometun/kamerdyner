@@ -65,8 +65,7 @@ class Chat:
     async def compact(self, policy: CompactionPolicy) -> CompactionPlan:
         """Moves the oldest part of the conversation into memory if the policy says so, and
         returns what was decided."""
-        now = self._clock()
-        plan = policy.plan(self._current.messages, now)
+        plan = policy.plan(self._current.messages)
         match plan:
             case NoAction():
                 pass

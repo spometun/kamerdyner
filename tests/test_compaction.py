@@ -1,5 +1,5 @@
 import pytest
-from fakes import START, make_message
+from fakes import make_message
 
 from kamerdyner.compaction import (
     Compact,
@@ -29,20 +29,20 @@ def test_below_limit_keeps_everything() -> None:
     policy = SizeThresholdPolicy(_COUNTER, limit_tokens=1000, min_compress_tokens=500)
     messages = _dialogue(300, 300, 300)
 
-    assert policy.plan(messages, START) == NoAction()
+    assert policy.plan(messages) == NoAction()
 
 
 def test_empty_conversation_keeps_everything() -> None:
     policy = SizeThresholdPolicy(_COUNTER, limit_tokens=1000, min_compress_tokens=500)
 
-    assert policy.plan([], START) == NoAction()
+    assert policy.plan([]) == NoAction()
 
 
 def test_at_limit_compresses_at_least_the_minimum_and_keeps_the_rest() -> None:
     policy = SizeThresholdPolicy(_COUNTER, limit_tokens=16_000, min_compress_tokens=8_000)
     messages = _dialogue(*[1000] * 16)
 
-    plan = policy.plan(messages, START)
+    plan = policy.plan(messages)
 
     assert plan == Compact(to_compress=tuple(messages[:8]), to_keep=tuple(messages[8:]))
 
@@ -51,7 +51,7 @@ def test_cut_extends_to_the_start_of_the_next_exchange() -> None:
     policy = SizeThresholdPolicy(_COUNTER, limit_tokens=6000, min_compress_tokens=3000)
     messages = _dialogue(*[1000] * 6)
 
-    plan = policy.plan(messages, START)
+    plan = policy.plan(messages)
 
     # The minimum is reached after the third message, a user's; their reply goes along.
     assert plan == Compact(to_compress=tuple(messages[:4]), to_keep=tuple(messages[4:]))
@@ -61,7 +61,7 @@ def test_compresses_everything_when_no_exchange_starts_after_the_minimum() -> No
     policy = SizeThresholdPolicy(_COUNTER, limit_tokens=6000, min_compress_tokens=3000)
     messages = _dialogue(1000, 20_000)
 
-    plan = policy.plan(messages, START)
+    plan = policy.plan(messages)
 
     assert plan == Compact(to_compress=tuple(messages), to_keep=())
 
@@ -91,7 +91,7 @@ def test_share_policy_moves_at_least_the_share_whatever_the_size() -> None:
     policy = ShareCompactionPolicy(_COUNTER, share=0.5)
     messages = _dialogue(100, 100, 100, 100, 100, 100)
 
-    plan = policy.plan(messages, START)
+    plan = policy.plan(messages)
 
     # Half is 300 tokens, reached on a user message; the cut moves past its reply.
     assert plan == Compact(to_compress=tuple(messages[:4]), to_keep=tuple(messages[4:]))
@@ -100,7 +100,7 @@ def test_share_policy_moves_at_least_the_share_whatever_the_size() -> None:
 def test_share_policy_leaves_an_empty_conversation_alone() -> None:
     policy = ShareCompactionPolicy(_COUNTER, share=0.5)
 
-    assert policy.plan([], START) == NoAction()
+    assert policy.plan([]) == NoAction()
 
 
 @pytest.mark.parametrize("share", [0, -0.5, 1.5])
