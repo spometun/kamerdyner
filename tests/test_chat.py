@@ -4,7 +4,7 @@ from pathlib import Path
 from fakes import FakeClock, RecordingMemory, ScriptedLLM, make_user
 
 from kamerdyner.chat import Chat
-from kamerdyner.compaction import SizeThresholdPolicy
+from kamerdyner.compaction import Compact, ShareCompactionPolicy, SizeThresholdPolicy
 from kamerdyner.llm import GenerateResult, Incomplete, Reply, Unavailable
 from kamerdyner.messages import Role
 from kamerdyner.store import ConversationLog, CurrentConversation
@@ -20,10 +20,10 @@ class _Setup:
         self.current = CurrentConversation(directory)
         log = ConversationLog(directory)
         # One token per byte; compact at 150 tokens, moving at least 50.
-        counter = ApproximateTokenCounter(bytes_per_token=1)
-        policy = SizeThresholdPolicy(counter, limit_tokens=150, min_compress_tokens=50)
+        self.counter = ApproximateTokenCounter(bytes_per_token=1)
+        self.policy = SizeThresholdPolicy(self.counter, limit_tokens=150, min_compress_tokens=50)
         user = make_user()
-        self.chat = Chat(user, log, self.current, self.memory, policy, self.llm, self.clock)
+        self.chat = Chat(user, log, self.current, self.memory, self.llm, self.clock)
 
     def logged_texts(self) -> list[str]:
         lines = (self.directory / "log.jsonl").read_text(encoding="utf-8").splitlines()
@@ -80,13 +80,13 @@ async def test_compact_hands_the_oldest_messages_to_memory(tmp_path: Path) -> No
     setup = _Setup(tmp_path, replies)
     for index in range(3):
         await setup.chat.send(f"question {index} " + "y" * 10)
-        await setup.chat.compact()
+        await setup.chat.compact(setup.policy)
         assert setup.memory.absorbed == [], f"compacted too early, after message {index}"
 
     # 4 exchanges of 21 + 20 tokens = 164 >= 150. The minimum of 50 is passed inside the second
     # exchange, so the cut moves to its end: the first two exchanges (82 tokens) go.
     await setup.chat.send("question 3 " + "y" * 10)
-    await setup.chat.compact()
+    await setup.chat.compact(setup.policy)
 
     [absorbed] = setup.memory.absorbed
     assert [message.text[:10] for message in absorbed] == [
@@ -102,3 +102,18 @@ async def test_compact_hands_the_oldest_messages_to_memory(tmp_path: Path) -> No
     await setup.chat.send("question 4")
     first_turn = setup.llm.prompts[-1].turns[0]
     assert "question 2" in first_turn.text
+
+
+async def test_compact_on_request_moves_at_least_half_and_reports_it(tmp_path: Path) -> None:
+    replies: list[GenerateResult] = [Reply("x" * 20) for _ in range(2)]
+    setup = _Setup(tmp_path, replies)
+    await setup.chat.send("question 0 " + "y" * 10)
+    await setup.chat.send("question 1 " + "y" * 10)
+    on_request = ShareCompactionPolicy(setup.counter, share=0.5)
+
+    plan = await setup.chat.compact(on_request)
+
+    assert isinstance(plan, Compact)
+    assert [message.text[:10] for message in plan.to_compress] == ["question 0", "x" * 10]
+    assert setup.memory.absorbed == [plan.to_compress]
+    assert [text[:10] for text in setup.current_texts()] == ["question 1", "x" * 10]

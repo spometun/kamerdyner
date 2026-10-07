@@ -3,7 +3,7 @@
 import logging
 from typing import assert_never
 
-from kamerdyner.compaction import Compact, CompactionPolicy, NoAction
+from kamerdyner.compaction import Compact, CompactionPlan, CompactionPolicy, NoAction
 from kamerdyner.llm import LLM, GenerateResult, Incomplete, Reply, Unavailable
 from kamerdyner.memory import Memory
 from kamerdyner.messages import Clock, Message, Role
@@ -18,7 +18,8 @@ class Chat:
     """Answers a user's messages and hands the overflow of the conversation to memory.
 
     A client calls `send` for each incoming message and `compact` when it is a good moment to
-    tidy up: right after showing the reply, or after a pause in the conversation.
+    tidy up — right after showing the reply, after a pause in the conversation, or on the user's
+    request — with the policy that fits the moment.
     """
 
     def __init__(
@@ -27,7 +28,6 @@ class Chat:
         log: ConversationLog,
         current: CurrentConversation,
         memory: Memory,
-        policy: CompactionPolicy,
         llm: LLM,
         clock: Clock,
     ) -> None:
@@ -35,7 +35,6 @@ class Chat:
         self._log = log
         self._current = current
         self._memory = memory
-        self._policy = policy
         self._llm = llm
         self._clock = clock
 
@@ -63,10 +62,11 @@ class Chat:
                 assert_never(result)
         return result
 
-    async def compact(self) -> None:
-        """Moves the oldest part of the conversation into memory if the policy says so."""
+    async def compact(self, policy: CompactionPolicy) -> CompactionPlan:
+        """Moves the oldest part of the conversation into memory if the policy says so, and
+        returns what was decided."""
         now = self._clock()
-        plan = self._policy.plan(self._current.messages, now)
+        plan = policy.plan(self._current.messages, now)
         match plan:
             case NoAction():
                 pass
@@ -83,3 +83,4 @@ class Chat:
                 )
             case _:
                 assert_never(plan)
+        return plan

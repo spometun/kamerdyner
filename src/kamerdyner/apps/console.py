@@ -5,6 +5,8 @@
 The user directory holds everything about the user: `user.toml` with their settings, and in
 `log/` the conversation and `console.log`, the log of this program. GEMINI_API_KEY and
 GEMINI_MODEL come from the environment or `.env`. Ctrl+D or Ctrl+C ends the chat.
+
+A line starting with "/" is a command, not a message to the assistant; see `_COMMANDS`.
 """
 
 import argparse
@@ -18,13 +20,21 @@ from dotenv import load_dotenv
 from google.genai import types
 
 from kamerdyner.chat import Chat
-from kamerdyner.compaction import SizeThresholdPolicy
+from kamerdyner.compaction import (
+    Compact,
+    CompactionPlan,
+    CompactionPolicy,
+    NoAction,
+    ShareCompactionPolicy,
+    SizeThresholdPolicy,
+    conversation_tokens,
+)
 from kamerdyner.llm import GenerateResult, Incomplete, Reply, Unavailable
 from kamerdyner.llm.gemini import GeminiLLM, make_client
 from kamerdyner.memory import EmptyMemory
 from kamerdyner.messages import utc_now
 from kamerdyner.store import ConversationLog, CurrentConversation
-from kamerdyner.tokens import ApproximateTokenCounter
+from kamerdyner.tokens import ApproximateTokenCounter, TokenCounter
 from kamerdyner.users import load_user
 
 
@@ -57,10 +67,11 @@ def main() -> None:
     current = CurrentConversation(log_directory)
     memory = EmptyMemory()
     counter = ApproximateTokenCounter()
-    policy = SizeThresholdPolicy(counter, limit_tokens=16_000, min_compress_tokens=8_000)
-    chat = Chat(user, log, current, memory, policy, llm, utc_now)
+    after_reply = SizeThresholdPolicy(counter, limit_tokens=16_000, min_compress_tokens=8_000)
+    on_request = ShareCompactionPolicy(counter, share=0.5)
+    chat = Chat(user, log, current, memory, llm, utc_now)
 
-    print(f"Kamerdyner — {user.name}. Ctrl+D to quit.")
+    print(f"Kamerdyner — {user.name}. Ctrl+D to quit, /help for commands.")
     with asyncio.Runner() as runner:
         while True:
             try:
@@ -70,11 +81,62 @@ def main() -> None:
                 break
             if not text.strip():
                 continue
+            if text.startswith("/"):
+                _run_command(text, runner, chat, on_request, counter)
+                continue
             sending = chat.send(text)
             result = runner.run(sending)
             _show(result)
-            compacting = chat.compact()
-            runner.run(compacting)
+            compacting = chat.compact(after_reply)
+            plan = runner.run(compacting)
+            match plan:
+                case NoAction():
+                    pass
+                case Compact():
+                    _show_compaction(plan, counter)
+                case _:
+                    assert_never(plan)
+
+
+_COMMANDS = {
+    "/compact": "move at least half of the current conversation into memory, oldest first",
+    "/help": "list the commands",
+}
+
+
+def _run_command(
+    command: str,
+    runner: asyncio.Runner,
+    chat: Chat,
+    policy: CompactionPolicy,
+    counter: TokenCounter,
+) -> None:
+    match command.strip():
+        case "/compact":
+            compacting = chat.compact(policy)
+            plan = runner.run(compacting)
+            _show_compaction(plan, counter)
+        case "/help":
+            print()
+            for name, description in _COMMANDS.items():
+                print(f"{name:10} {description}")
+        case unknown:
+            print(f"\n[unknown command {unknown!r}, /help lists the commands]")
+
+
+def _show_compaction(plan: CompactionPlan, counter: TokenCounter) -> None:
+    match plan:
+        case NoAction():
+            print("\n[nothing to compact: the conversation is empty]")
+        case Compact(to_compress=to_compress, to_keep=to_keep):
+            moved = conversation_tokens(to_compress, counter)
+            kept = conversation_tokens(to_keep, counter)
+            print(
+                f"\n[moved {len(to_compress)} messages (~{moved} tokens) into memory, "
+                f"{len(to_keep)} messages (~{kept} tokens) remain]"
+            )
+        case _:
+            assert_never(plan)
 
 
 def _required_env(parser: argparse.ArgumentParser, name: str) -> str:

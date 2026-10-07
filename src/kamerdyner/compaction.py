@@ -1,5 +1,6 @@
-"""Deciding when the recent conversation has grown too long and which part of it goes to memory."""
+"""Deciding when the current conversation has grown too long and which part of it goes to memory."""
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,8 +19,8 @@ class NoAction:
 class Compact:
     """The older messages `to_compress` go to memory; `to_keep` stay in the conversation.
 
-    Together they are the whole conversation, in order. `to_keep` is empty or starts with a user
-    message, so the dialogue left behind begins with a whole exchange.
+    Together they are the whole conversation, in order. The cut falls right after a reply of the
+    model, so no exchange — the user's message(s) and the reply to them — is split.
     """
 
     to_compress: tuple[Message, ...]
@@ -55,20 +56,50 @@ class SizeThresholdPolicy:
             )
 
     def plan(self, messages: Sequence[Message], now: datetime) -> CompactionPlan:
-        sizes = [self.counter.count(message.text) for message in messages]
-        total = sum(sizes)
+        total = conversation_tokens(messages, self.counter)
         if total < self.limit_tokens:
             return NoAction()
-        count = len(messages)
-        compressed = 0
-        for cut in range(1, count + 1):
-            compressed += sizes[cut - 1]
-            at_turn_start = cut == count or messages[cut].role is Role.USER
-            if compressed >= self.min_compress_tokens and at_turn_start:
-                to_compress = tuple(messages[:cut])
-                to_keep = tuple(messages[cut:])
-                return Compact(to_compress=to_compress, to_keep=to_keep)
-        raise AssertionError(
-            f"Internal error. No cut found in {len(messages)} messages of {total} tokens, "
-            f"limit {self.limit_tokens}, min_compress {self.min_compress_tokens}"
-        )
+        return split_oldest(messages, self.counter, self.min_compress_tokens)
+
+
+@dataclass(frozen=True)
+class ShareCompactionPolicy:
+    """Compacts whenever there is anything to compact, moving at least `share` of the
+    conversation's tokens, oldest first."""
+
+    counter: TokenCounter
+    share: float = 0.5
+
+    def __post_init__(self) -> None:
+        if not 0 < self.share <= 1:
+            raise ValueError(f"Invalid input. share must be in (0, 1], got {self.share}")
+
+    def plan(self, messages: Sequence[Message], now: datetime) -> CompactionPlan:
+        if not messages:
+            return NoAction()
+        total = conversation_tokens(messages, self.counter)
+        min_tokens = math.ceil(total * self.share)
+        return split_oldest(messages, self.counter, min_tokens)
+
+
+def conversation_tokens(messages: Sequence[Message], counter: TokenCounter) -> int:
+    sizes = [counter.count(message.text) for message in messages]
+    return sum(sizes)
+
+
+def split_oldest(messages: Sequence[Message], counter: TokenCounter, min_tokens: int) -> Compact:
+    """Splits off the oldest messages worth at least `min_tokens` — or all of them, if the
+    conversation holds less — cutting only right after a reply of the model."""
+    if min_tokens < 0:
+        raise ValueError(f"Invalid input. min_tokens must not be negative, got {min_tokens}")
+    count = len(messages)
+    compressed = 0
+    for cut in range(1, count):
+        compressed += counter.count(messages[cut - 1].text)
+        after_reply = messages[cut - 1].role is Role.MODEL
+        if compressed >= min_tokens and after_reply:
+            to_compress = tuple(messages[:cut])
+            to_keep = tuple(messages[cut:])
+            return Compact(to_compress=to_compress, to_keep=to_keep)
+    everything = tuple(messages)
+    return Compact(to_compress=everything, to_keep=())

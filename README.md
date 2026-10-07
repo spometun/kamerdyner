@@ -77,4 +77,7 @@ mkdir -p data/marta && cp user.example.toml data/marta/user.toml
 python -m kamerdyner.apps.console data/marta
 ```
 
+In the chat, `/help` lists the commands, e.g. `/compact` to move at least half of the current
+conversation into memory right away.
+
 Checks: `pytest`, `pyright`, `ruff check`, `ruff format --check`.

@@ -1,7 +1,13 @@
 import pytest
 from fakes import START, make_message
 
-from kamerdyner.compaction import Compact, NoAction, SizeThresholdPolicy
+from kamerdyner.compaction import (
+    Compact,
+    NoAction,
+    ShareCompactionPolicy,
+    SizeThresholdPolicy,
+    split_oldest,
+)
 from kamerdyner.messages import Message, Role
 from kamerdyner.tokens import ApproximateTokenCounter
 
@@ -64,3 +70,40 @@ def test_compresses_everything_when_no_exchange_starts_after_the_minimum() -> No
 def test_rejects_inconsistent_sizes(limit: int, minimum: int) -> None:
     with pytest.raises(ValueError, match="Invalid input"):
         SizeThresholdPolicy(_COUNTER, limit_tokens=limit, min_compress_tokens=minimum)
+
+
+def test_cut_never_separates_an_unanswered_message_from_the_next_one() -> None:
+    # The second user message went unanswered, so the third one shares its reply.
+    roles = [Role.USER, Role.MODEL, Role.USER, Role.USER, Role.MODEL, Role.USER, Role.MODEL]
+    messages = [make_message(role, "x" * 1000, minutes=index) for index, role in enumerate(roles)]
+
+    plan = split_oldest(messages, _COUNTER, min_tokens=3000)
+
+    assert plan == Compact(to_compress=tuple(messages[:5]), to_keep=tuple(messages[5:]))
+
+
+def test_split_rejects_a_negative_minimum() -> None:
+    with pytest.raises(ValueError, match="Invalid input"):
+        split_oldest([], _COUNTER, min_tokens=-1)
+
+
+def test_share_policy_moves_at_least_the_share_whatever_the_size() -> None:
+    policy = ShareCompactionPolicy(_COUNTER, share=0.5)
+    messages = _dialogue(100, 100, 100, 100, 100, 100)
+
+    plan = policy.plan(messages, START)
+
+    # Half is 300 tokens, reached on a user message; the cut moves past its reply.
+    assert plan == Compact(to_compress=tuple(messages[:4]), to_keep=tuple(messages[4:]))
+
+
+def test_share_policy_leaves_an_empty_conversation_alone() -> None:
+    policy = ShareCompactionPolicy(_COUNTER, share=0.5)
+
+    assert policy.plan([], START) == NoAction()
+
+
+@pytest.mark.parametrize("share", [0, -0.5, 1.5])
+def test_share_policy_rejects_a_share_outside_zero_to_one(share: float) -> None:
+    with pytest.raises(ValueError, match="Invalid input"):
+        ShareCompactionPolicy(_COUNTER, share=share)
