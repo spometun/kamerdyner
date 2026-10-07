@@ -134,7 +134,7 @@ def _run_command(
 def _show_compaction(plan: CompactionPlan, counter: TokenCounter) -> None:
     match plan:
         case NoAction():
-            print("\n[nothing to compact: the conversation is empty]")
+            print("\n[nothing to compact]")
         case Compact(to_compress=to_compress, to_keep=to_keep):
             moved = conversation_tokens(to_compress, counter)
             kept = conversation_tokens(to_keep, counter)

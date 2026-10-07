@@ -146,8 +146,11 @@ not be papered over. Keep the two strictly apart.
 
 - **Handle edge cases by design, not by branching.** Prefer a structure where the edge case is
   just the normal path taken with a boundary value: an empty list instead of `None` + a guard, a
-  variant of the result union that already means "nothing here". An unreadable trick is worse
-  than a plain `if`.
+  variant of the result union that already means "nothing here". Before writing `if not xs:` or
+  `if xs and ...`, check whether the general code already does the right thing on the empty
+  case (an empty conversation splits into nothing to compress and nothing to keep; grouping
+  messages by role yields no groups) — then delete the branch. Do this everywhere it stays
+  simple; an unreadable trick is worse than a plain `if`.
 - **Type annotations everywhere, checked strictly.** Every function declares its parameter and
   return types; the type checker runs in strict mode. Local variables may rely on inference.
   Prefer frozen dataclasses for domain values over dicts and tuples.

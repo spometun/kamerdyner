@@ -1,5 +1,6 @@
 """Assembling the request to the model from the user, their memory and the recent conversation."""
 
+import itertools
 from collections.abc import Sequence
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -55,14 +56,11 @@ def _system_instruction(user: User, memory: str) -> str:
 
 def _turns(messages: Sequence[Message], timezone: ZoneInfo) -> tuple[Turn, ...]:
     turns: list[Turn] = []
-    for message in messages:
-        text = _render(message, timezone)
-        if turns and turns[-1].role is message.role:
-            merged = Turn(role=message.role, text=f"{turns[-1].text}\n\n{text}")
-            turns[-1] = merged
-        else:
-            turn = Turn(role=message.role, text=text)
-            turns.append(turn)
+    for role, group in itertools.groupby(messages, key=lambda message: message.role):
+        texts = [_render(message, timezone) for message in group]
+        joined = "\n\n".join(texts)
+        turn = Turn(role=role, text=joined)
+        turns.append(turn)
     return tuple(turns)
 
 

@@ -97,10 +97,10 @@ def test_share_policy_moves_at_least_the_share_whatever_the_size() -> None:
     assert plan == Compact(to_compress=tuple(messages[:4]), to_keep=tuple(messages[4:]))
 
 
-def test_share_policy_leaves_an_empty_conversation_alone() -> None:
+def test_share_policy_on_an_empty_conversation_moves_nothing() -> None:
     policy = ShareCompactionPolicy(_COUNTER, share=0.5)
 
-    assert policy.plan([]) == NoAction()
+    assert policy.plan([]) == Compact(to_compress=(), to_keep=())
 
 
 @pytest.mark.parametrize("share", [0, -0.5, 1.5])

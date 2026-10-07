@@ -63,8 +63,7 @@ class SizeThresholdPolicy:
 
 @dataclass(frozen=True)
 class ShareCompactionPolicy:
-    """Compacts whenever there is anything to compact, moving at least `share` of the
-    conversation's tokens, oldest first."""
+    """Always compacts, moving at least `share` of the conversation's tokens, oldest first."""
 
     counter: TokenCounter
     share: float = 0.5
@@ -74,8 +73,6 @@ class ShareCompactionPolicy:
             raise ValueError(f"Invalid input. share must be in (0, 1], got {self.share}")
 
     def plan(self, messages: Sequence[Message]) -> CompactionPlan:
-        if not messages:
-            return NoAction()
         total = conversation_tokens(messages, self.counter)
         min_tokens = math.ceil(total * self.share)
         return split_oldest(messages, self.counter, min_tokens)
