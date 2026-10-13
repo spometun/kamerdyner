@@ -9,6 +9,7 @@ description = "AI assistant for a couple: one bot that knows both partners, a se
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "aiogram",
     "google-genai",
     "aiohttp",
     "httpx",
@@ -41,3 +42,8 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# The bot speaks Ukrainian: Cyrillic letters that look Latin are meant, not typos (RUF001-003).
+allowed-confusables = [
+    "а", "в", "е", "з", "і", "к", "н", "о", "п", "р", "с", "т", "у", "х", "ь",
+    "А", "В", "Е", "З", "І", "К", "М", "Н", "О", "Р", "С", "Т", "У", "Х", "Ь",
+]

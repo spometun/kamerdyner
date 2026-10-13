@@ -80,7 +80,7 @@ def test_corrupted_current_conversation_names_the_message(tmp_path: Path) -> Non
     good = {"role": "user", "text": "fine", "at": "2026-10-04T18:32:00+00:00"}
     bad = {"role": "nobody", "text": "x", "at": "2026-10-04T18:33:00+00:00"}
     content = json.dumps({"messages": [good, bad]})
-    (tmp_path / "current.json").write_text(content, encoding="utf-8")
+    (tmp_path / "latest.json").write_text(content, encoding="utf-8")
 
     with pytest.raises(ValueError, match="message 1"):
         CurrentConversation(tmp_path)

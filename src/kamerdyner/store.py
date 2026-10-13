@@ -1,11 +1,11 @@
-"""A user's conversation on disk.
+"""A user's conversation on disk, in two files of the user's directory:
 
-A user's directory holds:
-
-    log.jsonl     every message ever written, one per line, append-only: the archive. It is never
-                  read on the way to the model.
-    current.json  the current conversation, the messages the model sees: {"messages": [...]},
-                  rewritten whole on every change.
+    log/log.jsonl       every message ever written, one per line, append-only: the archive. It
+                        is never read on the way to the model. Kept by `ConversationLog`, given
+                        the log directory.
+    memory/latest.json  the current conversation, the messages the model sees:
+                        {"messages": [...]}, rewritten whole on every change. Kept by
+                        `CurrentConversation`, given the memory directory.
 
 A message is stored as {"role": "user" | "model", "text": "...", "at": "<ISO 8601, UTC>"}.
 """
@@ -47,7 +47,7 @@ class CurrentConversation:
     written through on every change, so a crash loses nothing that was acknowledged."""
 
     def __init__(self, directory: Path) -> None:
-        self._path = directory / "current.json"
+        self._path = directory / "latest.json"
         directory.mkdir(parents=True, exist_ok=True)
         self._messages = _load_current(self._path)
 

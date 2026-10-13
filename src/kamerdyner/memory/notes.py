@@ -5,6 +5,7 @@ The memory directory holds:
     notes.md     the memory itself, what goes into the system instruction: one entry per absorbed
                  stretch, each opening with the heading of its time span; rewritten whole on
                  every change.
+    latest.json  the current conversation, the messages the model sees (see `kamerdyner.store`).
     memory.log   what memory did, for a person to read: every pass with the conversation it took
                  and the notes it wrote, or why it failed. Append-only, never read back.
 """

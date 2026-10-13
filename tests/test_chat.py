@@ -1,13 +1,14 @@
 import json
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from fakes import FakeClock, RecordingMemory, ScriptedLLM, make_user
 
 from kamerdyner.chat import Chat
 from kamerdyner.compaction import Compact, ShareCompactionPolicy, SizeThresholdPolicy
-from kamerdyner.llm import GenerateResult, Incomplete, Reply, Unavailable
-from kamerdyner.memory import NotAbsorbed
-from kamerdyner.messages import Role
+from kamerdyner.llm import GenerateResult, Incomplete, Prompt, Reply, Unavailable
+from kamerdyner.memory import AbsorbResult, NotAbsorbed
+from kamerdyner.messages import Message, Role
 from kamerdyner.store import ConversationLog, CurrentConversation
 from kamerdyner.tokens import ApproximateTokenCounter
 
@@ -20,9 +21,9 @@ class _Setup:
         self.memory = RecordingMemory("Любить каву без цукру.")
         self.current = CurrentConversation(directory)
         log = ConversationLog(directory)
-        # One token per byte; compact at 150 tokens, moving at least 50.
+        # One token per byte; compact at 150 tokens, keeping at least 80.
         self.counter = ApproximateTokenCounter(bytes_per_token=1)
-        self.policy = SizeThresholdPolicy(self.counter, limit_tokens=150, min_compress_tokens=50)
+        self.policy = SizeThresholdPolicy(self.counter, limit_tokens=150, keep_tokens=80)
         user = make_user()
         self.chat = Chat(user, log, self.current, self.memory, self.llm, self.clock)
 
@@ -84,8 +85,8 @@ async def test_compact_hands_the_oldest_messages_to_memory(tmp_path: Path) -> No
         await setup.chat.compact(setup.policy)
         assert setup.memory.absorbed == [], f"compacted too early, after message {index}"
 
-    # 4 exchanges of 21 + 20 tokens = 164 >= 150. The minimum of 50 is passed inside the second
-    # exchange, so the cut moves to its end: the first two exchanges (82 tokens) go.
+    # 4 exchanges of 21 + 20 tokens = 164 >= 150. Keeping the last exchange alone (41 tokens) is
+    # less than 80, so the last two stay (82 tokens) and the first two go.
     await setup.chat.send("question 3 " + "y" * 10)
     await setup.chat.compact(setup.policy)
 
@@ -135,3 +136,61 @@ async def test_compact_keeps_the_conversation_when_memory_fails(tmp_path: Path) 
     assert len(setup.current_texts()) == 4
     reopened = CurrentConversation(tmp_path)
     assert len(reopened.messages) == 4
+
+
+class _MidwayLLM:
+    """Replies with fixed texts; before the first reply, runs `meanwhile` — a message arriving
+    while the model is thinking."""
+
+    def __init__(self, texts: list[str], meanwhile: Callable[[], None]) -> None:
+        self._texts = texts
+        self._meanwhile = meanwhile
+        self.prompts: list[Prompt] = []
+
+    async def generate(self, prompt: Prompt) -> GenerateResult:
+        self.prompts.append(prompt)
+        if len(self.prompts) == 1:
+            self._meanwhile()
+        text = self._texts.pop(0)
+        return Reply(text)
+
+
+async def test_a_message_arriving_during_a_reply_is_answered_next(tmp_path: Path) -> None:
+    clock = FakeClock()
+    current = CurrentConversation(tmp_path)
+    log = ConversationLog(tmp_path)
+    memory = RecordingMemory("")
+    holder: list[Chat] = []
+    llm = _MidwayLLM(["Відповідь 1", "Відповідь 2"], lambda: holder[0].receive("Друге"))
+    chat = Chat(make_user(), log, current, memory, llm, clock)
+    holder.append(chat)
+
+    chat.receive("Перше")
+    await chat.reply()
+
+    assert [message.text for message in current.messages] == ["Перше", "Відповідь 1", "Друге"]
+    assert chat.awaiting_reply
+    await chat.reply()
+    assert not chat.awaiting_reply
+    assert "Друге" in llm.prompts[1].turns[-1].text
+
+
+async def test_a_message_arriving_during_compaction_stays(tmp_path: Path) -> None:
+    replies: list[GenerateResult] = [Reply("x" * 20) for _ in range(2)]
+    setup = _Setup(tmp_path, replies)
+    await setup.chat.send("question 0 " + "y" * 10)
+    await setup.chat.send("question 1 " + "y" * 10)
+    original_absorb = setup.memory.absorb
+
+    async def absorb_while_one_arrives(messages: Sequence[Message]) -> AbsorbResult:
+        setup.chat.receive("arrived meanwhile")
+        return await original_absorb(messages)
+
+    setup.memory.absorb = absorb_while_one_arrives
+    on_request = ShareCompactionPolicy(setup.counter, share=0.5)
+
+    await setup.chat.compact(on_request)
+
+    remaining = [text[:10] for text in setup.current_texts()]
+    assert remaining == ["question 1", "x" * 10, "arrived me"]
+    assert setup.chat.awaiting_reply

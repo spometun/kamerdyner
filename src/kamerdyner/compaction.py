@@ -35,30 +35,31 @@ class CompactionPolicy(Protocol):
 
 @dataclass(frozen=True)
 class SizeThresholdPolicy:
-    """Compacts once the conversation reaches `limit_tokens`, moving at least
-    `min_compress_tokens` of the oldest messages to memory.
+    """Compacts once the conversation reaches `limit_tokens`: moves as many of the oldest messages
+    to memory as it can while at least `keep_tokens` of the newest stay.
 
     Moving a large share at once rather than just the overflow keeps compaction rare: memory
     gets fewer, fuller entries, and the start of the prompt stays stable between compactions.
+    An exchange too large to leave `keep_tokens` behind it stays until enough newer messages
+    follow it; until then nothing is moved.
     """
 
     counter: TokenCounter
     limit_tokens: int = 16_000
-    min_compress_tokens: int = 8_000
+    keep_tokens: int = 8_000
 
     def __post_init__(self) -> None:
-        if not 0 < self.min_compress_tokens <= self.limit_tokens:
+        if not 0 < self.keep_tokens < self.limit_tokens:
             raise ValueError(
-                f"Invalid input. Need 0 < min_compress_tokens <= limit_tokens, got "
-                f"min_compress_tokens={self.min_compress_tokens}, "
-                f"limit_tokens={self.limit_tokens}"
+                f"Invalid input. Need 0 < keep_tokens < limit_tokens, got "
+                f"keep_tokens={self.keep_tokens}, limit_tokens={self.limit_tokens}"
             )
 
     def plan(self, messages: Sequence[Message]) -> CompactionPlan:
         total = conversation_tokens(messages, self.counter)
         if total < self.limit_tokens:
             return NoAction()
-        return split_oldest(messages, self.counter, self.min_compress_tokens)
+        return split_newest(messages, self.counter, self.keep_tokens)
 
 
 @dataclass(frozen=True)
@@ -99,3 +100,21 @@ def split_oldest(messages: Sequence[Message], counter: TokenCounter, min_tokens:
             return Compact(to_compress=to_compress, to_keep=to_keep)
     everything = tuple(messages)
     return Compact(to_compress=everything, to_keep=())
+
+
+def split_newest(
+    messages: Sequence[Message], counter: TokenCounter, keep_tokens: int
+) -> CompactionPlan:
+    """Splits off the oldest messages, as many as leave at least `keep_tokens` of the newest,
+    cutting only right after a reply of the model; `NoAction` when no such cut exists."""
+    if keep_tokens < 0:
+        raise ValueError(f"Invalid input. keep_tokens must not be negative, got {keep_tokens}")
+    kept = 0
+    for cut in range(len(messages), 0, -1):
+        after_reply = messages[cut - 1].role is Role.MODEL
+        if kept >= keep_tokens and after_reply:
+            to_compress = tuple(messages[:cut])
+            to_keep = tuple(messages[cut:])
+            return Compact(to_compress=to_compress, to_keep=to_keep)
+        kept += counter.count(messages[cut - 1].text)
+    return NoAction()

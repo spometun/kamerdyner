@@ -3,9 +3,9 @@
     python -m kamerdyner.apps.console <user directory>
 
 The user directory holds everything about the user: `user.toml` with their settings, in `log/`
-the conversation and `console.log`, the log of this program, and in `memory/` the memory with
-`memory.log`, the record of what memory did. GEMINI_API_KEY and
-GEMINI_MODEL come from the environment or `.env`. /exit, Ctrl+D or Ctrl+C ends the chat.
+the archive of the conversation and `console.log`, the log of this program, and in `memory/` the
+memory, the current conversation and `memory.log`, the record of what memory did. GEMINI_API_KEY
+and GEMINI_MODEL come from the environment or `.env`. /exit, Ctrl+D or Ctrl+C ends the chat.
 
 A line starting with "/" is a command, not a message to the assistant; see `_COMMANDS`.
 What is typed while the assistant is busy is not echoed; it appears in the next prompt. Each
@@ -70,11 +70,12 @@ def main() -> None:
     llm = GeminiLLM(client, model, types.ThinkingLevel.LOW, seed=0)
     memory_llm = GeminiLLM(client, model, types.ThinkingLevel.HIGH, seed=0)
     log = ConversationLog(log_directory)
-    current = CurrentConversation(log_directory)
     memory_directory = directory / "memory"
+    current = CurrentConversation(memory_directory)
     memory = NotesMemory(memory_directory, user, memory_llm, utc_now)
     counter = ApproximateTokenCounter()
-    after_reply = SizeThresholdPolicy(counter, limit_tokens=16_000, min_compress_tokens=8_000)
+    # Temporarily 4K instead of 16K, to see compaction happen in testing.
+    after_reply = SizeThresholdPolicy(counter, limit_tokens=4_000, keep_tokens=2_000)
     on_request = ShareCompactionPolicy(counter, share=0.5)
     chat = Chat(user, log, current, memory, llm, utc_now)
 

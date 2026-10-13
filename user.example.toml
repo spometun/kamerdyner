@@ -2,3 +2,5 @@
 # user's id; the conversation is kept in its log/ subdirectory.
 name = "Марта"
 timezone = "America/Toronto"
+# For the Telegram bot: the user's Telegram id. The bot tells it to anyone it does not know.
+# telegram_id = 123456789

@@ -6,6 +6,7 @@ from kamerdyner.compaction import (
     NoAction,
     ShareCompactionPolicy,
     SizeThresholdPolicy,
+    split_newest,
     split_oldest,
 )
 from kamerdyner.messages import Message, Role
@@ -26,50 +27,61 @@ def _dialogue(*sizes: int) -> list[Message]:
 
 
 def test_below_limit_keeps_everything() -> None:
-    policy = SizeThresholdPolicy(_COUNTER, limit_tokens=1000, min_compress_tokens=500)
+    policy = SizeThresholdPolicy(_COUNTER, limit_tokens=1000, keep_tokens=500)
     messages = _dialogue(300, 300, 300)
 
     assert policy.plan(messages) == NoAction()
 
 
 def test_empty_conversation_keeps_everything() -> None:
-    policy = SizeThresholdPolicy(_COUNTER, limit_tokens=1000, min_compress_tokens=500)
+    policy = SizeThresholdPolicy(_COUNTER, limit_tokens=1000, keep_tokens=500)
 
     assert policy.plan([]) == NoAction()
 
 
-def test_at_limit_compresses_at_least_the_minimum_and_keeps_the_rest() -> None:
-    policy = SizeThresholdPolicy(_COUNTER, limit_tokens=16_000, min_compress_tokens=8_000)
-    messages = _dialogue(*[1000] * 16)
+def test_at_limit_compresses_all_but_the_newest_kept_tokens() -> None:
+    policy = SizeThresholdPolicy(_COUNTER, limit_tokens=4000, keep_tokens=2000)
+    messages = _dialogue(*[500] * 8)
 
     plan = policy.plan(messages)
 
-    assert plan == Compact(to_compress=tuple(messages[:8]), to_keep=tuple(messages[8:]))
-
-
-def test_cut_extends_to_the_start_of_the_next_exchange() -> None:
-    policy = SizeThresholdPolicy(_COUNTER, limit_tokens=6000, min_compress_tokens=3000)
-    messages = _dialogue(*[1000] * 6)
-
-    plan = policy.plan(messages)
-
-    # The minimum is reached after the third message, a user's; their reply goes along.
     assert plan == Compact(to_compress=tuple(messages[:4]), to_keep=tuple(messages[4:]))
 
 
-def test_compresses_everything_when_no_exchange_starts_after_the_minimum() -> None:
-    policy = SizeThresholdPolicy(_COUNTER, limit_tokens=6000, min_compress_tokens=3000)
-    messages = _dialogue(1000, 20_000)
+def test_keeps_more_than_the_minimum_to_cut_right_after_a_reply() -> None:
+    policy = SizeThresholdPolicy(_COUNTER, limit_tokens=4000, keep_tokens=2000)
+    messages = _dialogue(*[600] * 7)
 
     plan = policy.plan(messages)
 
-    assert plan == Compact(to_compress=tuple(messages), to_keep=())
+    # Keeping 2000 needs the last four messages (2400), which start with a model reply; the
+    # cut moves back past the user message before it, keeping five (3000).
+    assert plan == Compact(to_compress=tuple(messages[:2]), to_keep=tuple(messages[2:]))
 
 
-@pytest.mark.parametrize(("limit", "minimum"), [(1000, 0), (1000, 1001), (0, 0)])
-def test_rejects_inconsistent_sizes(limit: int, minimum: int) -> None:
+def test_a_huge_exchange_waits_until_enough_newer_messages_follow_it() -> None:
+    policy = SizeThresholdPolicy(_COUNTER, limit_tokens=4000, keep_tokens=2000)
+    messages = _dialogue(3500, 300, 100, 200)
+
+    # Over the limit, but cutting after either reply would keep less than 2000.
+    assert policy.plan(messages) == NoAction()
+
+    messages += _dialogue(900, 900)
+    plan = policy.plan(messages)
+
+    # 100 + 200 + 900 + 900 = 2100 now follow the huge exchange, so it can go.
+    assert plan == Compact(to_compress=tuple(messages[:2]), to_keep=tuple(messages[2:]))
+
+
+@pytest.mark.parametrize(("limit", "keep"), [(1000, 0), (1000, 1000), (0, 0)])
+def test_rejects_inconsistent_sizes(limit: int, keep: int) -> None:
     with pytest.raises(ValueError, match="Invalid input"):
-        SizeThresholdPolicy(_COUNTER, limit_tokens=limit, min_compress_tokens=minimum)
+        SizeThresholdPolicy(_COUNTER, limit_tokens=limit, keep_tokens=keep)
+
+
+def test_split_newest_rejects_a_negative_keep() -> None:
+    with pytest.raises(ValueError, match="Invalid input"):
+        split_newest([], _COUNTER, keep_tokens=-1)
 
 
 def test_cut_never_separates_an_unanswered_message_from_the_next_one() -> None:
