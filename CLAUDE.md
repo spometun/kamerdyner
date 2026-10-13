@@ -18,12 +18,14 @@ deferred to stage 2, and the open questions. Settle open questions with the user
 them, and keep this section current.
 
 Code: the library is `src/kamerdyner/` (messages, users, conversation log on disk, compaction
-policy, memory, prompt assembly, the LLM boundary in `llm/` with one module per provider (now
-`llm/gemini.py`), `Chat` tying them together); programs are thin assemblies in `src/kamerdyner/apps/` (now: `console`; next:
-Telegram). Memory is still `EmptyMemory`. A user is a directory holding everything of theirs:
-`user.toml` (name, timezone), later the memory, and `log/` with `log.jsonl` (the append-only
-archive, never read on the way to the model), `current.json` (the current conversation, what the
-model sees) and the program's log.
+policy, memory in `memory/` (one module per implementation and per way of compressing; now
+`notes.py` over the first compression, `summary.py`), prompt assembly, the LLM boundary in `llm/`
+with one module per provider (now `llm/gemini.py`), `Chat` tying them together); programs are
+thin assemblies in `src/kamerdyner/apps/` (now: `console`; next: Telegram). A user is a directory
+holding everything of theirs: `user.toml` (name, timezone), `memory/` with `notes.md` (the
+memory, what goes into the system instruction) and `memory.log` (what memory did, for a person
+to read), and `log/` with `log.jsonl` (the append-only archive, never read on the way to the
+model), `current.json` (the current conversation, what the model sees) and the program's log.
 
 Environment: conda env `kamerdyner` from `environment.yml`; every dependency is declared in
 `pyproject.toml`. Run the checks inside it: `pytest`, `pyright` (strict), `ruff format`,

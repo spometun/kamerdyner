@@ -5,13 +5,17 @@ from typing import assert_never
 
 from kamerdyner.compaction import Compact, CompactionPlan, CompactionPolicy, NoAction
 from kamerdyner.llm import LLM, GenerateResult, Incomplete, Reply, Unavailable
-from kamerdyner.memory import Memory
+from kamerdyner.memory import Absorbed, Memory, NotAbsorbed
 from kamerdyner.messages import Clock, Message, Role
 from kamerdyner.prompt import build_prompt
 from kamerdyner.store import ConversationLog, CurrentConversation
 from kamerdyner.users import User
 
 logger = logging.getLogger(__name__)
+
+type CompactionOutcome = CompactionPlan | NotAbsorbed
+"""What `Chat.compact` did: nothing, the plan carried out, or nothing because memory could not
+take the messages."""
 
 
 class Chat:
@@ -62,24 +66,34 @@ class Chat:
                 assert_never(result)
         return result
 
-    async def compact(self, policy: CompactionPolicy) -> CompactionPlan:
-        """Moves the oldest part of the conversation into memory if the policy says so, and
-        returns what was decided."""
+    async def compact(self, policy: CompactionPolicy) -> CompactionOutcome:
+        """Moves the oldest part of the conversation into memory if the policy says so. The
+        conversation is cut only once memory has taken the messages."""
         plan = policy.plan(self._current.messages)
         match plan:
             case NoAction():
-                pass
+                return plan
             case Compact(to_compress=to_compress, to_keep=to_keep):
-                moved = len(to_compress)
-                remaining = len(to_keep)
-                await self._memory.absorb(to_compress)
-                self._current.replace(to_keep)
-                logger.info(
-                    "Moved %d messages of user %s into memory, %d remain",
-                    moved,
-                    self._user.id,
-                    remaining,
-                )
+                absorbed = await self._memory.absorb(to_compress)
+                match absorbed:
+                    case Absorbed():
+                        self._current.replace(to_keep)
+                        logger.info(
+                            "Moved %d messages of user %s into memory, %d remain",
+                            len(to_compress),
+                            self._user.id,
+                            len(to_keep),
+                        )
+                        return plan
+                    case NotAbsorbed(reason=reason):
+                        logger.warning(
+                            "Kept %d messages of user %s in the conversation: %s",
+                            len(to_compress),
+                            self._user.id,
+                            reason,
+                        )
+                        return absorbed
+                    case _:
+                        assert_never(absorbed)
             case _:
                 assert_never(plan)
-        return plan

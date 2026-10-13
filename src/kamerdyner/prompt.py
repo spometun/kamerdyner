@@ -45,6 +45,9 @@ _MEMORY_SECTION = """
 
 # What you remember about {name}
 
+Your own notes on earlier conversations with {name}, oldest first, written by you in the first \
+person: "I" in them is you. The conversation below continues after them.
+
 {memory}"""
 
 

@@ -63,8 +63,19 @@ class CurrentConversation:
         """Makes `messages` the whole current conversation."""
         records = [_record(message) for message in messages]
         text = json.dumps({"messages": records}, ensure_ascii=False, indent=1)
-        _write_atomically(self._path, text)
+        write_atomically(self._path, text)
         self._messages = tuple(messages)
+
+
+def write_atomically(path: Path, text: str) -> None:
+    """Replaces the file with `text` so that a crash leaves either the old file or the new one."""
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w", encoding="utf-8") as file:
+        file.write(text)
+        file.flush()
+        descriptor = file.fileno()
+        os.fsync(descriptor)
+    os.replace(temporary, path)
 
 
 def _record(message: Message) -> dict[str, str]:
@@ -126,13 +137,3 @@ def _drop_torn_tail(path: Path) -> None:
         file.flush()
         descriptor = file.fileno()
         os.fsync(descriptor)
-
-
-def _write_atomically(path: Path, text: str) -> None:
-    temporary = path.with_name(path.name + ".tmp")
-    with temporary.open("w", encoding="utf-8") as file:
-        file.write(text)
-        file.flush()
-        descriptor = file.fileno()
-        os.fsync(descriptor)
-    os.replace(temporary, path)

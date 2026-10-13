@@ -14,15 +14,18 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiLLM:
-    """Generates with one Gemini model at a fixed thinking level. Retries of transient failures
-    (429, 5xx, timeouts) are configured on the client; what still fails comes back as a value."""
+    """Generates with one Gemini model at a fixed thinking level and a fixed sampling seed, so
+    the same prompt gets the same reply (best effort on Google's side, and only for the same
+    model version). Retries of transient failures (429, 5xx, timeouts) are configured on the
+    client; what still fails comes back as a value."""
 
     def __init__(
-        self, client: genai.Client, model: str, thinking_level: types.ThinkingLevel
+        self, client: genai.Client, model: str, thinking_level: types.ThinkingLevel, seed: int
     ) -> None:
         self._client = client
         self._model = model
         self._thinking_level = thinking_level
+        self._seed = seed
 
     async def generate(self, prompt: Prompt) -> GenerateResult:
         contents = _contents(prompt.turns)
@@ -33,6 +36,7 @@ class GeminiLLM:
             system_instruction=prompt.system_instruction,
             thinking_config=thinking,
             automatic_function_calling=manual_calls,
+            seed=self._seed,
         )
         try:
             # The SDK's signature mentions PIL images, unknown without Pillow installed.

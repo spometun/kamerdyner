@@ -1,7 +1,8 @@
 """Users of the assistant.
 
 A user is a directory holding everything about them: their settings in `user.toml`, and next to
-it their conversation (see `kamerdyner.store`). `user.toml`:
+it their conversation (see `kamerdyner.store`) and their memory (see `kamerdyner.memory`).
+`user.toml`:
 
     name = "Марта"
     timezone = "America/Toronto"

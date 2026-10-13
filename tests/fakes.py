@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from kamerdyner.llm import GenerateResult, Prompt
+from kamerdyner.memory import Absorbed, AbsorbResult
 from kamerdyner.messages import Message, Role
 from kamerdyner.users import User
 
@@ -47,15 +48,18 @@ class ScriptedLLM:
 
 
 class RecordingMemory:
-    """Keeps absorbed batches for inspection; its content is a fixed text."""
+    """Keeps absorbed batches for inspection and answers each with `result`, `Absorbed` unless
+    set; its content is a fixed text."""
 
     def __init__(self, text: str) -> None:
         self.text = text
+        self.result: AbsorbResult = Absorbed()
         self.absorbed: list[tuple[Message, ...]] = []
 
     def content(self) -> str:
         return self.text
 
-    async def absorb(self, messages: Sequence[Message]) -> None:
+    async def absorb(self, messages: Sequence[Message]) -> AbsorbResult:
         batch = tuple(messages)
         self.absorbed.append(batch)
+        return self.result

@@ -6,6 +6,7 @@ from fakes import FakeClock, RecordingMemory, ScriptedLLM, make_user
 from kamerdyner.chat import Chat
 from kamerdyner.compaction import Compact, ShareCompactionPolicy, SizeThresholdPolicy
 from kamerdyner.llm import GenerateResult, Incomplete, Reply, Unavailable
+from kamerdyner.memory import NotAbsorbed
 from kamerdyner.messages import Role
 from kamerdyner.store import ConversationLog, CurrentConversation
 from kamerdyner.tokens import ApproximateTokenCounter
@@ -117,3 +118,20 @@ async def test_compact_on_request_moves_at_least_half_and_reports_it(tmp_path: P
     assert [message.text[:10] for message in plan.to_compress] == ["question 0", "x" * 10]
     assert setup.memory.absorbed == [plan.to_compress]
     assert [text[:10] for text in setup.current_texts()] == ["question 1", "x" * 10]
+
+
+async def test_compact_keeps_the_conversation_when_memory_fails(tmp_path: Path) -> None:
+    replies: list[GenerateResult] = [Reply("x" * 20) for _ in range(2)]
+    setup = _Setup(tmp_path, replies)
+    setup.memory.result = NotAbsorbed("the model is unavailable: 503")
+    await setup.chat.send("question 0 " + "y" * 10)
+    await setup.chat.send("question 1 " + "y" * 10)
+    on_request = ShareCompactionPolicy(setup.counter, share=0.5)
+
+    outcome = await setup.chat.compact(on_request)
+
+    assert outcome == NotAbsorbed("the model is unavailable: 503")
+    assert len(setup.memory.absorbed) == 1
+    assert len(setup.current_texts()) == 4
+    reopened = CurrentConversation(tmp_path)
+    assert len(reopened.messages) == 4
