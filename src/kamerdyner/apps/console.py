@@ -51,7 +51,7 @@ def main() -> None:
     try:
         user = load_user(directory)
     except FileNotFoundError as error:
-        parser.error(f"no {error.filename}, copy user.example.toml there")
+        parser.error(f"no {error.filename}; cp -r user.example {directory}, then fill in the name")
 
     load_dotenv()
     api_key = _required_env(parser, "GEMINI_API_KEY")

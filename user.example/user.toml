@@ -1,0 +1,8 @@
+# A user's directory: copy it whole into data/ under the user's id and fill in the name, e.g.
+#     cp -r user.example data/marta
+# The directory name is the user's id. Their memory/ and log/ appear next to this file on the
+# first run.
+name = ""
+timezone = "America/Toronto"
+# For the Telegram bot: the user's Telegram id. The bot tells it to anyone it does not know.
+# telegram_id = 123456789
