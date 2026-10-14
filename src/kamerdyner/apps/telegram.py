@@ -198,7 +198,8 @@ def _dispatcher(bot: Bot, members: dict[int, _Member], on_request: CompactionPol
         member = members.get(sender.id)
         if member is None:
             logger.info("Message from unknown Telegram user %s (@%s)", sender.id, sender.username)
-            await _send(bot, message.chat.id, f"Це приватний бот. Твій Telegram id: {sender.id}")
+            reply = f"Це приватний бот від Sergiy Pometun. Твій Telegram id: {sender.id}"
+            await _send(bot, message.chat.id, reply)
         return member
 
     @router.message(CommandStart())
