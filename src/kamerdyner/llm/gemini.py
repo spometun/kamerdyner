@@ -76,11 +76,28 @@ def _result(response: types.GenerateContentResponse) -> GenerateResult:
             reason=f"no candidates, prompt block reason {block_reason}", partial_text=""
         )
     candidate = response.candidates[0]
-    text = "" if response.text is None else response.text
+    text = _answer_text(candidate)
     finish_reason = candidate.finish_reason
     if finish_reason is types.FinishReason.STOP and text:
         return Reply(text=text)
     return Incomplete(reason=f"finish reason {finish_reason}, {len(text)} chars", partial_text=text)
+
+
+def _answer_text(candidate: types.Candidate) -> str:
+    """The joined text of the parts that carry a thought signature. Gemini 3 signs every answer;
+    a part without a signature is the model's reasoning come back unmarked, as if it were the answer
+    (gemini-3.8-flash at a low thinking level, a few percent of replies). Such parts are dropped
+    and logged."""
+    content = candidate.content
+    # A candidate stopped before any output (e.g. by safety filters) comes without content.
+    parts = [] if content is None or content.parts is None else content.parts
+    texts: list[str] = []
+    for part in parts:
+        if part.thought_signature is None:
+            logger.warning("Dropped a Gemini response part without a thought signature: %r", part)
+        elif part.text is not None:
+            texts.append(part.text)
+    return "".join(texts)
 
 
 def _log_usage(response: types.GenerateContentResponse) -> None:
