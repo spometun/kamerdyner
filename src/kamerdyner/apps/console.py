@@ -2,14 +2,16 @@
 
     python -m kamerdyner.apps.console <user directory>
 
-The user directory holds everything about the user: `user.toml` with their settings, in `log/`
-the archive of the conversation and `console.log`, the log of this program, and in `memory/` the
-memory, the current conversation and `memory.log`, the record of what memory did. GEMINI_API_KEY
+The user directory holds everything about the user: `user.toml` with their settings,
+`pending.json` with their messages still waiting for a reply, in `log/` the archive of the
+conversation and `console.log`, the log of this program, and in `memory/` the memory: the recent
+conversation, the notes and `memory.log`, the record of what memory did. GEMINI_API_KEY
 and GEMINI_MODEL come from the environment or `.env`. /exit, Ctrl+D or Ctrl+C ends the chat.
 
 A line starting with "/" is a command, not a message to the assistant; see `_COMMANDS`.
 What is typed while the assistant is busy is not echoed; it appears in the next prompt. Each
-reply opens with the size of the conversation the model saw, in (approximate) tokens: `[122]`.
+reply opens with the size of the recent conversation in memory after it, in (approximate)
+tokens: `[122]`.
 """
 
 import argparse
@@ -23,22 +25,14 @@ from dotenv import load_dotenv
 from google.genai import types
 
 from kamerdyner.apps.terminal import TypeAhead
-from kamerdyner.chat import Chat, CompactionOutcome
-from kamerdyner.compaction import (
-    Compact,
-    CompactionPolicy,
-    NoAction,
-    ShareCompactionPolicy,
-    SizeThresholdPolicy,
-    conversation_tokens,
-)
+from kamerdyner.chat import Chat
 from kamerdyner.llm import GenerateResult, Incomplete, Reply, Unavailable
 from kamerdyner.llm.gemini import GeminiLLM, make_client
-from kamerdyner.memory import NotAbsorbed
+from kamerdyner.memory import CompactionOutcome, NotAbsorbed
+from kamerdyner.memory.compaction import Compact, NoAction
 from kamerdyner.memory.notes import NotesMemory
 from kamerdyner.messages import utc_now
-from kamerdyner.store import ConversationLog, CurrentConversation
-from kamerdyner.tokens import ApproximateTokenCounter, TokenCounter
+from kamerdyner.store import ConversationLog, MessageFile
 from kamerdyner.users import load_user
 
 
@@ -70,14 +64,10 @@ def main() -> None:
     llm = GeminiLLM(client, model, types.ThinkingLevel.LOW, seed=0)
     memory_llm = GeminiLLM(client, model, types.ThinkingLevel.HIGH, seed=0)
     log = ConversationLog(log_directory)
+    pending = MessageFile(directory / "pending.json")
     memory_directory = directory / "memory"
-    current = CurrentConversation(memory_directory)
-    memory = NotesMemory(memory_directory, user, memory_llm, utc_now)
-    counter = ApproximateTokenCounter()
-    # Temporarily 4K instead of 16K, to see compaction happen in testing.
-    after_reply = SizeThresholdPolicy(counter, limit_tokens=4_000, keep_tokens=2_000)
-    on_request = ShareCompactionPolicy(counter, share=0.5)
-    chat = Chat(user, log, current, memory, llm, utc_now)
+    memory = NotesMemory(memory_directory, user.name, memory_llm)
+    chat = Chat(user, log, pending, memory, llm, utc_now)
 
     type_ahead = TypeAhead()
     print(f"Kamerdyner — {user.name}. /exit or Ctrl+D to quit, /help for commands.")
@@ -91,30 +81,34 @@ def main() -> None:
             if not text.strip():
                 continue
             if text.startswith("/"):
-                keep_going = _run_command(text, runner, chat, on_request, counter, type_ahead)
+                keep_going = _run_command(text, runner, chat, type_ahead)
                 if not keep_going:
                     break
                 continue
-            earlier = conversation_tokens(current.messages, counter)
-            seen_tokens = earlier + counter.count(text)
             sending = chat.send(text)
             with type_ahead.collecting():
                 result = runner.run(sending)
-            _show(result, seen_tokens)
-            compacting = chat.compact(after_reply)
+            _show(result, chat.conversation_tokens)
+            if chat.conversation_tokens < _LIMIT_TOKENS:
+                continue
+            compacting = chat.compact(_KEEP_TOKENS)
             with type_ahead.collecting():
                 outcome = runner.run(compacting)
             match outcome:
                 case NoAction():
                     pass
                 case Compact() | NotAbsorbed():
-                    _show_compaction(outcome, counter)
+                    _show_compaction(outcome, chat)
                 case _:
                     assert_never(outcome)
 
 
+# Temporarily 4K instead of 16K, to see compaction happen in testing.
+_LIMIT_TOKENS = 4_000
+_KEEP_TOKENS = 2_000
+
 _COMMANDS = {
-    "/compact": "move at least half of the current conversation into memory, oldest first",
+    "/compact": "move up to the older half of the recent conversation into memory",
     "/help": "list the commands",
     "/exit": "end the chat",
 }
@@ -124,17 +118,16 @@ def _run_command(
     command: str,
     runner: asyncio.Runner,
     chat: Chat,
-    policy: CompactionPolicy,
-    counter: TokenCounter,
     type_ahead: TypeAhead,
 ) -> bool:
     """Runs a console command; returns False when the chat should end."""
     match command.strip():
         case "/compact":
-            compacting = chat.compact(policy)
+            half = chat.conversation_tokens // 2
+            compacting = chat.compact(half)
             with type_ahead.collecting():
                 outcome = runner.run(compacting)
-            _show_compaction(outcome, counter)
+            _show_compaction(outcome, chat)
         case "/help":
             print()
             for name, description in _COMMANDS.items():
@@ -146,16 +139,14 @@ def _run_command(
     return True
 
 
-def _show_compaction(outcome: CompactionOutcome, counter: TokenCounter) -> None:
+def _show_compaction(outcome: CompactionOutcome, chat: Chat) -> None:
     match outcome:
         case NoAction():
             print("\n[nothing to compact]")
         case Compact(to_compress=to_compress, to_keep=to_keep):
-            moved = conversation_tokens(to_compress, counter)
-            kept = conversation_tokens(to_keep, counter)
             print(
-                f"\n[moved {len(to_compress)} messages (~{moved} tokens) into memory, "
-                f"{len(to_keep)} messages (~{kept} tokens) remain]"
+                f"\n[moved {len(to_compress)} messages into memory, {len(to_keep)} messages "
+                f"(~{chat.conversation_tokens} tokens) remain]"
             )
         case NotAbsorbed(reason=reason):
             print(f"\n[memory could not take the old messages, they stay: {reason}]")
@@ -170,15 +161,15 @@ def _required_env(parser: argparse.ArgumentParser, name: str) -> str:
     return value
 
 
-def _show(result: GenerateResult, seen_tokens: int) -> None:
-    """Prints the reply, opening with the size of the conversation the model saw."""
+def _show(result: GenerateResult, tokens: int) -> None:
+    """Prints the reply, opening with the size of the recent conversation in memory."""
     match result:
         case Reply(text=text):
-            print(f"\n[{seen_tokens}] {text}")
+            print(f"\n[{tokens}] {text}")
         case Incomplete(reason=reason, partial_text=partial_text):
-            print(f"\n[{seen_tokens}] {partial_text}\n[the reply was cut short: {reason}]")
+            print(f"\n[{tokens}] {partial_text}\n[the reply was cut short: {reason}]")
         case Unavailable(detail=detail):
-            print(f"\n[{seen_tokens}] [the model is unavailable, try again: {detail}]")
+            print(f"\n[{tokens}] [the model is unavailable, try again: {detail}]")
         case _:
             assert_never(result)
 

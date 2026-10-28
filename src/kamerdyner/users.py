@@ -1,7 +1,9 @@
 """Users of the assistant.
 
 A user is a directory holding everything about them: their settings in `user.toml`, and next to
-it their conversation (see `kamerdyner.store`) and their memory (see `kamerdyner.memory`).
+it their messages waiting for a reply (`pending.json`, see `kamerdyner.chat`), the archive of
+their conversation (`log/`, see `kamerdyner.store`) and their memory (`memory/`, see
+`kamerdyner.memory`).
 `user.toml`:
 
     name = "Марта"

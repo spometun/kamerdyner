@@ -1,13 +1,13 @@
-"""A user's conversation on disk, in two files of the user's directory:
+"""Messages on disk, in two kinds of files:
 
-    log/log.jsonl       every message ever written, one per line, append-only: the archive. It
-                        is never read on the way to the model. Kept by `ConversationLog`, given
-                        the log directory.
-    memory/latest.json  the current conversation, the messages the model sees:
-                        {"messages": [...]}, rewritten whole on every change. Kept by
-                        `CurrentConversation`, given the memory directory.
+    an archive  every message ever written, one JSON object per line, append-only; never read on
+                the way to the model. Kept by `ConversationLog` as `log.jsonl`, given its
+                directory.
+    a list      messages that change as a whole: {"messages": [...]}, rewritten whole on every
+                change. Kept by `MessageFile`, given its path.
 
-A message is stored as {"role": "user" | "model", "text": "...", "at": "<ISO 8601, UTC>"}.
+A message is stored as {"role": "user" | "model", "text": "...", "at": "<ISO 8601>"}, the time
+with the user's local offset: "2026-10-04T14:32:00-04:00".
 """
 
 import json
@@ -42,14 +42,15 @@ class ConversationLog:
             os.fsync(descriptor)
 
 
-class CurrentConversation:
-    """The messages the model sees, oldest first. Read from disk once, then kept in memory and
-    written through on every change, so a crash loses nothing that was acknowledged."""
+class MessageFile:
+    """A list of messages, oldest first, kept in a file; a missing file is an empty list. Read
+    from disk once, then kept in memory and written through on every change, so a crash loses
+    nothing that was acknowledged."""
 
-    def __init__(self, directory: Path) -> None:
-        self._path = directory / "latest.json"
-        directory.mkdir(parents=True, exist_ok=True)
-        self._messages = _load_current(self._path)
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._messages = _load_messages(path)
 
     @property
     def messages(self) -> tuple[Message, ...]:
@@ -60,7 +61,7 @@ class CurrentConversation:
         self.replace(messages)
 
     def replace(self, messages: Sequence[Message]) -> None:
-        """Makes `messages` the whole current conversation."""
+        """Makes `messages` the whole list."""
         records = [_record(message) for message in messages]
         text = json.dumps({"messages": records}, ensure_ascii=False, indent=1)
         write_atomically(self._path, text)
@@ -82,7 +83,7 @@ def _record(message: Message) -> dict[str, str]:
     return {"role": message.role.value, "text": message.text, "at": message.at.isoformat()}
 
 
-def _load_current(path: Path) -> tuple[Message, ...]:
+def _load_messages(path: Path) -> tuple[Message, ...]:
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -90,12 +91,12 @@ def _load_current(path: Path) -> tuple[Message, ...]:
     try:
         content = json.loads(text)
     except json.JSONDecodeError as error:
-        raise ValueError(f"Corrupted current conversation {path}: {error}") from error
+        raise ValueError(f"Corrupted message file {path}: {error}") from error
     match content:
         case {"messages": [*records]}:
             pass
         case _:
-            raise ValueError(f"Corrupted current conversation {path}: no 'messages' list")
+            raise ValueError(f"Corrupted message file {path}: no 'messages' list")
     messages: list[Message] = []
     for index, record in enumerate(records):
         message = _message(record, path, index)
@@ -108,17 +109,13 @@ def _message(record: Any, path: Path, index: int) -> Message:
         case {"role": str() as role, "text": str() as text, "at": str() as at}:
             pass
         case _:
-            raise ValueError(
-                f"Corrupted current conversation {path}: message {index} is {record!r}"
-            )
+            raise ValueError(f"Corrupted message file {path}: message {index} is {record!r}")
     try:
         parsed_role = Role(role)
         parsed_at = datetime.fromisoformat(at)
         return Message(role=parsed_role, text=text, at=parsed_at)
     except ValueError as error:
-        raise ValueError(
-            f"Corrupted current conversation {path}: message {index}: {error}"
-        ) from error
+        raise ValueError(f"Corrupted message file {path}: message {index}: {error}") from error
 
 
 def _drop_torn_tail(path: Path) -> None:

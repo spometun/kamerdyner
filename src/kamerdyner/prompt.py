@@ -2,11 +2,9 @@
 
 import itertools
 from collections.abc import Sequence
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 from kamerdyner.llm import Prompt, Turn
-from kamerdyner.messages import Message, Role
+from kamerdyner.messages import Message, Role, format_time
 from kamerdyner.users import User
 
 
@@ -18,18 +16,9 @@ def build_prompt(user: User, memory: str, messages: Sequence[Message]) -> Prompt
     `messages` must end with a user message.
     """
     system_instruction = _system_instruction(user, memory)
-    turns = _turns(messages, user.timezone)
+    turns = _turns(messages)
     return Prompt(system_instruction=system_instruction, turns=turns)
 
-
-def format_time(at: datetime, timezone: ZoneInfo) -> str:
-    """`2026-10-04 Sun 14:32` in the given timezone."""
-    local = at.astimezone(timezone)
-    weekday = _WEEKDAYS[local.weekday()]
-    return f"{local:%Y-%m-%d} {weekday} {local:%H:%M}"
-
-
-_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 _INSTRUCTION = """\
 You are Kamerdyner, the personal assistant of {name}. Help with anything they ask, from \
@@ -71,20 +60,20 @@ def _system_instruction(user: User, memory: str) -> str:
     return instruction + memory_section
 
 
-def _turns(messages: Sequence[Message], timezone: ZoneInfo) -> tuple[Turn, ...]:
+def _turns(messages: Sequence[Message]) -> tuple[Turn, ...]:
     turns: list[Turn] = []
     for role, group in itertools.groupby(messages, key=lambda message: message.role):
-        texts = [_render(message, timezone) for message in group]
+        texts = [_render(message) for message in group]
         joined = "\n\n".join(texts)
         turn = Turn(role=role, text=joined)
         turns.append(turn)
     return tuple(turns)
 
 
-def _render(message: Message, timezone: ZoneInfo) -> str:
+def _render(message: Message) -> str:
     match message.role:
         case Role.USER:
-            stamp = format_time(message.at, timezone)
+            stamp = format_time(message.at)
             return f"[{stamp}] {message.text}"
         case Role.MODEL:
             return message.text

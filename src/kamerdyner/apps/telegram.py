@@ -33,22 +33,15 @@ from aiogram.types import Message as TelegramMessage
 from dotenv import load_dotenv
 from google.genai import types
 
-from kamerdyner.chat import Chat, CompactionOutcome
-from kamerdyner.compaction import (
-    Compact,
-    CompactionPolicy,
-    NoAction,
-    ShareCompactionPolicy,
-    SizeThresholdPolicy,
-)
+from kamerdyner.chat import Chat
 from kamerdyner.llm import LLM, GenerateResult, Incomplete, Reply, Unavailable
 from kamerdyner.llm.gemini import GeminiLLM, make_client
-from kamerdyner.memory import NotAbsorbed
+from kamerdyner.memory import CompactionOutcome, NotAbsorbed
+from kamerdyner.memory.compaction import Compact, NoAction
 from kamerdyner.memory.notes import NotesMemory
 from kamerdyner.messages import utc_now
 from kamerdyner.session import Session
-from kamerdyner.store import ConversationLog, CurrentConversation
-from kamerdyner.tokens import ApproximateTokenCounter
+from kamerdyner.store import ConversationLog, MessageFile
 from kamerdyner.users import User, load_user
 
 logger = logging.getLogger(__name__)
@@ -78,16 +71,12 @@ def main() -> None:
     # A fixed seed makes replies repeatable: a change in them comes from our prompt or code.
     llm = GeminiLLM(client, model, types.ThinkingLevel.LOW, seed=0)
     memory_llm = GeminiLLM(client, model, types.ThinkingLevel.HIGH, seed=0)
-    counter = ApproximateTokenCounter()
-    # Temporarily 4K instead of 16K, to see compaction happen in testing.
-    after_reply = SizeThresholdPolicy(counter, limit_tokens=4_000, keep_tokens=2_000)
-    on_request = ShareCompactionPolicy(counter, share=0.5)
     members: dict[int, _Member] = {}
     for telegram_id, directory in directories.items():
-        member = _member(directory, llm, memory_llm, after_reply)
+        member = _member(directory, llm, memory_llm)
         members[telegram_id] = member
 
-    asyncio.run(_serve(token, members, on_request))
+    asyncio.run(_serve(token, members))
 
 
 def load_telegram_users(data: Path) -> dict[int, Path]:
@@ -132,6 +121,10 @@ def split_message(text: str, limit: int) -> list[str]:
     return pieces
 
 
+# Temporarily 4K instead of 16K, to see compaction happen in testing.
+_LIMIT_TOKENS = 4_000
+_KEEP_TOKENS = 2_000
+
 # Telegram allows 4096 characters; it counts some in UTF-16 units, hence the margin.
 _MESSAGE_LIMIT = 4000
 # Telegram shows a chat action for about five seconds.
@@ -154,19 +147,19 @@ class _Member:
     session: Session
 
 
-def _member(directory: Path, llm: LLM, memory_llm: LLM, after_reply: CompactionPolicy) -> _Member:
+def _member(directory: Path, llm: LLM, memory_llm: LLM) -> _Member:
     user = load_user(directory)
     log_directory = directory / "log"
     log = ConversationLog(log_directory)
+    pending = MessageFile(directory / "pending.json")
     memory_directory = directory / "memory"
-    current = CurrentConversation(memory_directory)
-    memory = NotesMemory(memory_directory, user, memory_llm, utc_now)
-    chat = Chat(user, log, current, memory, llm, utc_now)
-    session = Session(chat, after_reply)
+    memory = NotesMemory(memory_directory, user.name, memory_llm)
+    chat = Chat(user, log, pending, memory, llm, utc_now)
+    session = Session(chat, _LIMIT_TOKENS, _KEEP_TOKENS)
     return _Member(user=user, session=session)
 
 
-async def _serve(token: str, members: dict[int, _Member], on_request: CompactionPolicy) -> None:
+async def _serve(token: str, members: dict[int, _Member]) -> None:
     bot = Bot(token=token)
     try:
         me = await bot.get_me()
@@ -177,7 +170,7 @@ async def _serve(token: str, members: dict[int, _Member], on_request: Compaction
     users = ", ".join(names) if names else "nobody yet (add telegram_id to a user.toml)"
     print(f"@{me.username} is running for {users}. Ctrl+C stops it.")
     logger.info("Bot @%s started for %d users", me.username, len(members))
-    dispatcher = _dispatcher(bot, members, on_request)
+    dispatcher = _dispatcher(bot, members)
     async with asyncio.TaskGroup() as group:
         for telegram_id, member in members.items():
             group.create_task(_answer_waiting(bot, telegram_id, member))
@@ -185,7 +178,7 @@ async def _serve(token: str, members: dict[int, _Member], on_request: Compaction
         await dispatcher.start_polling(bot)  # pyright: ignore[reportUnknownMemberType]
 
 
-def _dispatcher(bot: Bot, members: dict[int, _Member], on_request: CompactionPolicy) -> Dispatcher:
+def _dispatcher(bot: Bot, members: dict[int, _Member]) -> Dispatcher:
     router = Router()
     router.message.filter(F.chat.type == ChatType.PRIVATE)
 
@@ -222,7 +215,9 @@ def _dispatcher(bot: Bot, members: dict[int, _Member], on_request: CompactionPol
         member = await member_of(message)
         if member is None:
             return
-        outcome = await member.session.compact(on_request)
+        # Up to the older half: at least half of the newest stays.
+        half = member.session.conversation_tokens // 2
+        outcome = await member.session.compact(half)
         report = _compaction_report(outcome)
         await _send(bot, message.chat.id, report)
         # Messages may have arrived while compacting.

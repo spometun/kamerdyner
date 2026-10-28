@@ -1,68 +1,114 @@
-"""Memory as the assistant's notes on each stretch of conversation, oldest first.
+"""Memory as the recent conversation plus the assistant's notes on each older stretch of it.
 
 The memory directory holds:
 
-    notes.md     the memory itself, what goes into the system instruction: one entry per absorbed
-                 stretch, each opening with the heading of its time span; rewritten whole on
-                 every change.
-    latest.json  the current conversation, the messages the model sees (see `kamerdyner.store`).
+    latest.json  the recent conversation, the messages the model sees (see `kamerdyner.store`).
+    notes.md     long-term memory, what goes into the system instruction: one entry per absorbed
+                 stretch, oldest first, each opening with the heading of its time span; rewritten
+                 whole on every change.
     memory.log   what memory did, for a person to read: every pass with the conversation it took
                  and the notes it wrote, or why it failed. Append-only, never read back.
 """
 
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import assert_never
 
 from kamerdyner.llm import LLM, Incomplete, Reply, Unavailable
-from kamerdyner.memory import Absorbed, AbsorbResult, NotAbsorbed
+from kamerdyner.memory import CompactionOutcome, NotAbsorbed
+from kamerdyner.memory.compaction import Compact, NoAction, conversation_tokens, split_newest
 from kamerdyner.memory.summary import span_heading, summarize, transcript
-from kamerdyner.messages import Clock, Message
-from kamerdyner.prompt import format_time
-from kamerdyner.store import write_atomically
-from kamerdyner.users import User
+from kamerdyner.messages import Message, Role, format_time
+from kamerdyner.store import MessageFile, write_atomically
+from kamerdyner.tokens import ApproximateTokenCounter
 
 logger = logging.getLogger(__name__)
 
 
 class NotesMemory:
-    """Absorbs each stretch of conversation as notes written by the model (`summary`) and
-    appends them to `notes.md`; the content is all the notes so far."""
+    """Keeps the recent conversation; compacting turns its older stretch into notes written by
+    the model (`summary`) and appends them to `notes.md`. The content is all the notes so far.
 
-    def __init__(self, directory: Path, user: User, llm: LLM, clock: Clock) -> None:
+    `name` is how the user is called in the notes; `llm` writes them.
+    """
+
+    def __init__(self, directory: Path, name: str, llm: LLM) -> None:
         directory.mkdir(parents=True, exist_ok=True)
+        self._conversation = MessageFile(directory / "latest.json")
         self._notes_path = directory / "notes.md"
         self._journal_path = directory / "memory.log"
-        self._user = user
+        self._name = name
         self._llm = llm
-        self._clock = clock
+        self._counter = ApproximateTokenCounter()
         self._notes = _load_notes(self._notes_path)
+
+    @property
+    def messages(self) -> tuple[Message, ...]:
+        return self._conversation.messages
 
     def content(self) -> str:
         return self._notes.rstrip("\n")
 
-    async def absorb(self, messages: Sequence[Message]) -> AbsorbResult:
-        """Keeps the notes unchanged when the model fails to write them."""
-        if not messages:
-            # Nothing to remember; not worth a call to the model.
-            return Absorbed()
-        conversation = transcript(self._user, messages)
-        result = await summarize(self._llm, self._user, messages)
+    def conversation_tokens(self) -> int:
+        return conversation_tokens(self._conversation.messages, self._counter)
+
+    def add(self, exchange: Sequence[Message]) -> None:
+        roles = [message.role for message in exchange]
+        well_formed = len(roles) >= 2 and roles[-1] is Role.MODEL and Role.MODEL not in roles[:-1]
+        if not well_formed:
+            raise ValueError(
+                f"Invalid input. An exchange is the user's messages and then one reply of the "
+                f"model, got roles {[role.value for role in roles]}"
+            )
+        messages = (*self._conversation.messages, *exchange)
+        self._conversation.replace(messages)
+
+    async def compact(self, keep_tokens: int) -> CompactionOutcome:
+        """The conversation is cut only once the notes on the older stretch are stored; when the
+        model fails to write them, memory stays as it was."""
+        plan = split_newest(self._conversation.messages, self._counter, keep_tokens)
+        match plan:
+            case NoAction():
+                return plan
+            case Compact(to_compress=to_compress):
+                absorbed = await self._absorb(to_compress)
+                match absorbed:
+                    case _Absorbed():
+                        remaining = self._messages_after(to_compress)
+                        self._conversation.replace(remaining)
+                        logger.info(
+                            "Moved %d messages of %s into notes, %d remain",
+                            len(to_compress),
+                            self._name,
+                            len(remaining),
+                        )
+                        return plan
+                    case NotAbsorbed():
+                        return absorbed
+                    case _:
+                        assert_never(absorbed)
+            case _:
+                assert_never(plan)
+
+    async def _absorb(self, messages: Sequence[Message]) -> "_Absorbed | NotAbsorbed":
+        conversation = transcript(self._name, messages)
+        result = await summarize(self._llm, self._name, messages)
         match result:
             case Reply(text=text):
                 entry = text.strip()
                 self._store(entry)
                 sections = [("conversation", conversation), ("notes", entry)]
-                heading = span_heading(self._user, messages)
+                heading = span_heading(messages)
                 first_line = entry.split("\n", 1)[0]
                 if first_line != heading:
                     warning = f"the notes open with {first_line!r} instead of {heading!r}"
-                    logger.warning("Notes of user %s: %s", self._user.id, warning)
+                    logger.warning("Notes of %s: %s", self._name, warning)
                     sections.append(("warning", warning))
                 self._journal(f"absorbed {len(messages)} messages", sections)
-                logger.info("Absorbed %d messages of user %s", len(messages), self._user.id)
-                return Absorbed()
+                return _Absorbed()
             case Incomplete(reason=reason, partial_text=partial_text):
                 outcome = NotAbsorbed(reason=f"the notes came back incomplete: {reason}")
                 sections = [("conversation", conversation), ("partial notes", partial_text)]
@@ -71,9 +117,19 @@ class NotesMemory:
                 sections = [("conversation", conversation)]
             case _:
                 assert_never(result)
-        logger.warning("Memory of user %s not updated: %s", self._user.id, outcome.reason)
+        logger.warning("Notes of %s not updated: %s", self._name, outcome.reason)
         self._journal(f"could not absorb {len(messages)} messages: {outcome.reason}", sections)
         return outcome
+
+    def _messages_after(self, prefix: Sequence[Message]) -> tuple[Message, ...]:
+        """The messages of the conversation that follow `prefix`, which must still be its start."""
+        messages = self._conversation.messages
+        count = len(prefix)
+        assert messages[:count] == tuple(prefix), (
+            f"Internal error. The conversation of {self._name} no longer starts with the {count} "
+            f"messages it had; it holds {len(messages)}"
+        )
+        return messages[count:]
 
     def _store(self, entry: str) -> None:
         notes = self._notes + entry + "\n\n"
@@ -81,14 +137,20 @@ class NotesMemory:
         self._notes = notes
 
     def _journal(self, title: str, sections: Sequence[tuple[str, str]]) -> None:
-        now = self._clock()
-        stamp = format_time(now, self._user.timezone)
+        # The machine's local time: the journal is read by the person running the program.
+        now = datetime.now().astimezone()
+        stamp = format_time(now)
         parts = [f"==== [{stamp}] {title} ====\n"]
         for name, body in sections:
             parts.append(f"--- {name} ---\n{body}\n")
         record = "\n".join(parts) + "\n"
         with self._journal_path.open("a", encoding="utf-8") as file:
             file.write(record)
+
+
+@dataclass(frozen=True)
+class _Absorbed:
+    """The messages are now in the notes and may leave the recent conversation."""
 
 
 def _load_notes(path: Path) -> str:

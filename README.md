@@ -77,7 +77,7 @@ cp -r user.example data/marta              # then fill in the name in data/marta
 python -m kamerdyner.apps.console data/marta
 ```
 
-In the chat, `/help` lists the commands, e.g. `/compact` to move at least half of the current
-conversation into memory right away.
+In the chat, `/help` lists the commands, e.g. `/compact` to move up to the older half of the
+recent conversation into memory right away.
 
 Checks: `pytest`, `pyright`, `ruff check`, `ruff format --check`.

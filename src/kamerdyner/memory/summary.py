@@ -9,32 +9,31 @@ model itself. Their length follows the substance of the conversation; nothing ca
 from collections.abc import Sequence
 
 from kamerdyner.llm import LLM, GenerateResult, Prompt, Turn
-from kamerdyner.messages import Message, Role
-from kamerdyner.prompt import format_time
-from kamerdyner.users import User
+from kamerdyner.messages import Message, Role, format_time
 
 
-async def summarize(llm: LLM, user: User, messages: Sequence[Message]) -> GenerateResult:
-    """Asks the model for notes on `messages`; a full reply carries them as its text.
+async def summarize(llm: LLM, name: str, messages: Sequence[Message]) -> GenerateResult:
+    """Asks the model for notes on `messages` of the user called `name`; a full reply carries
+    them as its text.
 
     `messages` must not be empty.
     """
     if not messages:
-        raise ValueError(f"Invalid input. Nothing to summarize for user {user.id!r}")
-    instruction = _INSTRUCTION.format(name=user.name)
-    conversation = transcript(user, messages)
+        raise ValueError(f"Invalid input. Nothing to summarize for {name!r}")
+    instruction = _INSTRUCTION.format(name=name)
+    conversation = transcript(name, messages)
     turn = Turn(role=Role.USER, text=conversation)
     prompt = Prompt(system_instruction=instruction, turns=(turn,))
     return await llm.generate(prompt)
 
 
-def transcript(user: User, messages: Sequence[Message]) -> str:
+def transcript(name: str, messages: Sequence[Message]) -> str:
     """The messages as the summarizing model reads them: one per paragraph, each opening with
     its local time and its author, `[2026-10-04 Sun 14:32] Марта: ...`."""
     lines: list[str] = []
     for message in messages:
-        stamp = format_time(message.at, user.timezone)
-        author = _author(message.role, user)
+        stamp = format_time(message.at)
+        author = _author(message.role, name)
         lines.append(f"[{stamp}] {author}: {message.text}")
     return "\n\n".join(lines)
 
@@ -74,17 +73,17 @@ what for, not its content.
 - Reply with the notes only."""
 
 
-def span_heading(user: User, messages: Sequence[Message]) -> str:
+def span_heading(messages: Sequence[Message]) -> str:
     """The heading the notes on `messages` must open with: the local times of the first and of
     the last message, `## [2026-10-04 Sun 14:32] — [2026-10-06 Tue 09:15]`."""
-    first = format_time(messages[0].at, user.timezone)
-    last = format_time(messages[-1].at, user.timezone)
+    first = format_time(messages[0].at)
+    last = format_time(messages[-1].at)
     return f"## [{first}] — [{last}]"
 
 
-def _author(role: Role, user: User) -> str:
+def _author(role: Role, name: str) -> str:
     match role:
         case Role.USER:
-            return user.name
+            return name
         case Role.MODEL:
             return _ASSISTANT
