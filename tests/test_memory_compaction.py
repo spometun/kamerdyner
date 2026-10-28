@@ -1,9 +1,10 @@
 import pytest
 from fakes import make_message
 
+from kamerdyner.common.llm import Role
+from kamerdyner.common.messages import Message
+from kamerdyner.common.tokens import ApproximateTokenCounter
 from kamerdyner.memory.compaction import Compact, NoAction, split_newest
-from kamerdyner.messages import Message, Role
-from kamerdyner.tokens import ApproximateTokenCounter
 
 # One token per byte, so a message of n ASCII characters weighs n tokens.
 _COUNTER = ApproximateTokenCounter(bytes_per_token=1)

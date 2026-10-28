@@ -17,17 +17,17 @@ stage 2 couple, the preliminary tiered-memory design in section 11), privacy del
 deferred to stage 2, and the open questions. Settle open questions with the user before coding
 them, and keep this section current.
 
-Code: the library is `src/kamerdyner/` (messages, whose times carry the user's local zone,
-users, messages on disk, memory in `memory/`, prompt assembly, the LLM boundary in `llm/` with one
-module per provider (now `llm/gemini.py`), `Chat` tying them together, `Session` running one
-chat's replies and compactions one at a time for a client whose messages arrive at any moment);
-programs are thin assemblies in `src/kamerdyner/apps/` (now: `console` and `telegram`, whose
-users are the user directories with a `telegram_id`). Memory is a self-contained package: the
-`Memory` interface (recent conversation of whole exchanges, long-term content, `add`,
-`compact(keep_tokens)`), one module per implementation and per way of compressing (now
-`notes.py` over the first compression, `summary.py`) and the choice of the cut
-(`compaction.py`); it depends only on messages, `llm`, `store` and `tokens`. An implementation is
-given its directory and loads itself from it. A user is a directory holding everything of
+Code: the library is `src/kamerdyner/`. `common/` is the shared base and depends on nothing
+else of ours: messages (their times carry the user's local zone), the LLM interface, messages on
+disk, token counting. `memory/` depends only on `common/`, so it can later become a package of its
+own: the `Memory` interface (recent conversation of whole exchanges, long-term content, `add`,
+`compact(keep_tokens)`), one module per implementation and per way of compressing (now `notes.py`
+over the first compression, `summary.py`) and the choice of the cut (`compaction.py`); an
+implementation is given its directory and loads itself from it. Next to them: users, prompt
+assembly, LLM providers in `llm/` (now `llm/gemini.py`), `Chat` tying them together, `Session`
+running one chat's replies and compactions one at a time for a client whose messages arrive at
+any moment. Programs are thin assemblies in `src/kamerdyner/apps/` (now: `console` and
+`telegram`, whose users are the user directories with a `telegram_id`). A user is a directory holding everything of
 theirs: `user.toml` (name, timezone), `pending.json` (their messages still waiting for a reply,
 kept by `Chat`), `memory/` with `latest.json` (the recent conversation, what the model sees),
 `notes.md` (long-term memory, what goes into the system instruction) and `memory.log` (what

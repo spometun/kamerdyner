@@ -1,8 +1,7 @@
 import pytest
 from fakes import make_message, make_user
 
-from kamerdyner.llm import Prompt, Turn
-from kamerdyner.messages import Role
+from kamerdyner.common.llm import Prompt, Role, Turn
 from kamerdyner.prompt import build_prompt
 
 

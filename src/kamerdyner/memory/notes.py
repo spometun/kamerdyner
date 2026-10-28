@@ -2,7 +2,7 @@
 
 The memory directory holds:
 
-    latest.json  the recent conversation, the messages the model sees (see `kamerdyner.store`).
+    latest.json  the recent conversation, the messages the model sees (a `MessageFile`).
     notes.md     long-term memory, what goes into the system instruction: one entry per absorbed
                  stretch, oldest first, each opening with the heading of its time span; rewritten
                  whole on every change.
@@ -17,13 +17,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import assert_never
 
-from kamerdyner.llm import LLM, Incomplete, Reply, Unavailable
+from kamerdyner.common.llm import LLM, Incomplete, Reply, Role, Unavailable
+from kamerdyner.common.messages import Message, format_time
+from kamerdyner.common.store import MessageFile, write_atomically
+from kamerdyner.common.tokens import ApproximateTokenCounter
 from kamerdyner.memory import CompactionOutcome, NotAbsorbed
 from kamerdyner.memory.compaction import Compact, NoAction, conversation_tokens, split_newest
 from kamerdyner.memory.summary import span_heading, summarize, transcript
-from kamerdyner.messages import Message, Role, format_time
-from kamerdyner.store import MessageFile, write_atomically
-from kamerdyner.tokens import ApproximateTokenCounter
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class NotesMemory:
         self._notes = _load_notes(self._notes_path)
 
     @property
-    def messages(self) -> tuple[Message, ...]:
+    def conversation(self) -> tuple[Message, ...]:
         return self._conversation.messages
 
     def content(self) -> str:

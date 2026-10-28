@@ -6,11 +6,11 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import assert_never
 
-from kamerdyner.llm import LLM, GenerateResult, Incomplete, Reply, Unavailable
+from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, Reply, Role, Unavailable
+from kamerdyner.common.messages import Clock, Message
+from kamerdyner.common.store import ConversationLog, MessageFile
 from kamerdyner.memory import CompactionOutcome, Memory
-from kamerdyner.messages import Clock, Message, Role
 from kamerdyner.prompt import build_prompt
-from kamerdyner.store import ConversationLog, MessageFile
 from kamerdyner.users import User
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ class Chat:
         seen = self._pending.messages
         assert seen, f"Internal error. Nothing to reply to for user {self._user.id}"
         memory = self._memory.content()
-        conversation = (*self._memory.messages, *seen)
+        conversation = (*self._memory.conversation, *seen)
         prompt = build_prompt(self._user, memory, conversation)
         result = await self._llm.generate(prompt)
         match result:
@@ -121,7 +121,7 @@ class Chat:
     def _drop_answered(self) -> None:
         """Drops the waiting messages that memory already holds: those the process stored in
         memory with their reply but died before removing from the waiting ones."""
-        held = set(self._memory.messages)
+        held = set(self._memory.conversation)
         waiting = [message for message in self._pending.messages if message not in held]
         dropped = len(self._pending.messages) - len(waiting)
         if dropped:

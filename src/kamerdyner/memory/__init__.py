@@ -5,14 +5,17 @@
 implementation keeps everything of its own in one directory given to it, loads it from there when
 created, and makes the helpers it needs itself. Whatever the way, long-term memory keeps both
 sides of the conversation: the user first of all, and the assistant itself — what it said,
-advised and promised."""
+advised and promised.
+
+The package depends on nothing of `kamerdyner` but `kamerdyner.common`, so that it can become a
+package of its own."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from kamerdyner.common.messages import Message
 from kamerdyner.memory.compaction import Compact, NoAction
-from kamerdyner.messages import Message
 
 
 @dataclass(frozen=True)
@@ -30,7 +33,7 @@ could not take the messages."""
 
 class Memory(Protocol):
     @property
-    def messages(self) -> tuple[Message, ...]:
+    def conversation(self) -> tuple[Message, ...]:
         """The recent conversation, oldest first: whole exchanges, as `add` took them."""
         ...
 
@@ -40,7 +43,7 @@ class Memory(Protocol):
         ...
 
     def conversation_tokens(self) -> int:
-        """The size of `messages` in (approximate) model tokens."""
+        """The size of `conversation` in (approximate) model tokens."""
         ...
 
     def add(self, exchange: Sequence[Message]) -> None:

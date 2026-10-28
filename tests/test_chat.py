@@ -6,10 +6,10 @@ from pathlib import Path
 from fakes import START, FakeClock, FakeMemory, ScriptedLLM, make_message, make_user
 
 from kamerdyner.chat import Chat
-from kamerdyner.llm import GenerateResult, Incomplete, Prompt, Reply, Turn, Unavailable
+from kamerdyner.common.llm import GenerateResult, Incomplete, Prompt, Reply, Role, Turn, Unavailable
+from kamerdyner.common.messages import Message
+from kamerdyner.common.store import ConversationLog, MessageFile
 from kamerdyner.memory import NotAbsorbed
-from kamerdyner.messages import Message, Role
-from kamerdyner.store import ConversationLog, MessageFile
 
 
 class _Setup:
@@ -36,7 +36,7 @@ class _Setup:
         return [json.loads(line)["text"] for line in lines]
 
     def memory_texts(self) -> list[str]:
-        return [message.text for message in self.memory.messages]
+        return [message.text for message in self.memory.conversation]
 
     def pending_texts(self) -> list[str]:
         return [message.text for message in self.pending.messages]
@@ -48,7 +48,7 @@ async def test_reply_goes_to_memory_with_the_message(tmp_path: Path) -> None:
     result = await setup.chat.send("Привіт")
 
     assert result == Reply("Привіт, Марто!")
-    stored = [(message.role, message.text) for message in setup.memory.messages]
+    stored = [(message.role, message.text) for message in setup.memory.conversation]
     assert stored == [(Role.USER, "Привіт"), (Role.MODEL, "Привіт, Марто!")]
     assert setup.pending_texts() == []
     assert not setup.chat.awaiting_reply
@@ -63,7 +63,7 @@ async def test_messages_carry_the_users_local_time(tmp_path: Path) -> None:
 
     await setup.chat.send("Котра година?")
 
-    [question, answer] = setup.memory.messages
+    [question, answer] = setup.memory.conversation
     assert question.at == START
     assert question.at.utcoffset() == timedelta(hours=-4)
     assert answer.at.utcoffset() == timedelta(hours=-4)
@@ -146,12 +146,12 @@ async def test_a_message_arriving_during_a_reply_is_answered_next(tmp_path: Path
     chat.receive("Перше")
     await chat.reply()
 
-    assert [message.text for message in memory.messages] == ["Перше", "Відповідь 1"]
+    assert [message.text for message in memory.conversation] == ["Перше", "Відповідь 1"]
     assert [message.text for message in pending.messages] == ["Друге"]
     assert chat.awaiting_reply
     await chat.reply()
     assert not chat.awaiting_reply
-    texts = [message.text for message in memory.messages]
+    texts = [message.text for message in memory.conversation]
     assert texts == ["Перше", "Відповідь 1", "Друге", "Відповідь 2"]
     assert "Друге" in llm.prompts[1].turns[-1].text
 

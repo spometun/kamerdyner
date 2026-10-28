@@ -7,9 +7,9 @@ import pytest
 from fakes import FakeClock, FakeMemory, make_user
 
 from kamerdyner.chat import Chat
-from kamerdyner.llm import GenerateResult, Prompt, Reply, Unavailable
+from kamerdyner.common.llm import GenerateResult, Prompt, Reply, Unavailable
+from kamerdyner.common.store import ConversationLog, MessageFile
 from kamerdyner.session import Session
-from kamerdyner.store import ConversationLog, MessageFile
 
 
 class _GatedLLM:
@@ -68,7 +68,7 @@ async def test_messages_arriving_during_a_reply_get_one_reply_together(tmp_path:
     llm.gate.set()
     await asyncio.gather(first, second, third)
 
-    texts = [message.text for message in memory.messages]
+    texts = [message.text for message in memory.conversation]
     assert texts == ["Перше", "Відповідь 1", "Друге", "Третє", "Відповідь 2"]
     assert client.delivered == [Reply("Відповідь 1"), Reply("Відповідь 2")]
     assert client.typing_scopes == 2
@@ -87,7 +87,7 @@ async def test_a_failed_reply_leaves_the_messages_for_the_next_catch_up(tmp_path
     await session.catch_up(client.deliver, client.replying)
 
     assert client.delivered == [Unavailable("503"), Reply("Нарешті")]
-    texts = [message.text for message in memory.messages]
+    texts = [message.text for message in memory.conversation]
     assert texts == ["Перше", "Друге", "Нарешті"]
 
 
@@ -122,7 +122,7 @@ async def test_compaction_on_request_waits_for_the_running_reply(tmp_path: Path)
     await asyncio.gather(replying, compacting)
 
     assert memory.compactions == [0]
-    assert len(memory.messages) == 2
+    assert len(memory.conversation) == 2
 
 
 @pytest.mark.parametrize(("limit", "keep"), [(1000, 0), (1000, 1000), (0, 0)])

@@ -8,8 +8,8 @@ model itself. Their length follows the substance of the conversation; nothing ca
 
 from collections.abc import Sequence
 
-from kamerdyner.llm import LLM, GenerateResult, Prompt, Turn
-from kamerdyner.messages import Message, Role, format_time
+from kamerdyner.common.llm import LLM, GenerateResult, Prompt, Role, Turn
+from kamerdyner.common.messages import Message, format_time
 
 
 async def summarize(llm: LLM, name: str, messages: Sequence[Message]) -> GenerateResult:

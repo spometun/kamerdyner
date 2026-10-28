@@ -6,7 +6,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import assert_never
 
 from kamerdyner.chat import Chat
-from kamerdyner.llm import GenerateResult, Incomplete, Reply, Unavailable
+from kamerdyner.common.llm import GenerateResult, Incomplete, Reply, Unavailable
 from kamerdyner.memory import CompactionOutcome
 
 type Deliver = Callable[[GenerateResult], Awaitable[None]]

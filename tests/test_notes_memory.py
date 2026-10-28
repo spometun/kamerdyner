@@ -3,11 +3,11 @@ from pathlib import Path
 import pytest
 from fakes import ScriptedLLM, make_message
 
-from kamerdyner.llm import GenerateResult, Incomplete, Prompt, Reply, Unavailable
+from kamerdyner.common.llm import GenerateResult, Incomplete, Prompt, Reply, Role, Unavailable
+from kamerdyner.common.messages import Message
 from kamerdyner.memory import NotAbsorbed
 from kamerdyner.memory.compaction import Compact, NoAction
 from kamerdyner.memory.notes import NotesMemory
-from kamerdyner.messages import Message, Role
 
 _HEADING = "## [2026-10-04 Sun 14:32] — [2026-10-04 Sun 14:33]"
 
@@ -32,7 +32,7 @@ def _journal(directory: Path) -> str:
 def test_new_memory_is_empty(tmp_path: Path) -> None:
     memory, _ = _memory(tmp_path, [])
 
-    assert memory.messages == ()
+    assert memory.conversation == ()
     assert memory.content() == ""
     assert memory.conversation_tokens() == 0
 
@@ -44,7 +44,7 @@ def test_conversation_survives_a_restart(tmp_path: Path) -> None:
     memory.add(exchange)
     reopened, _ = _memory(tmp_path, [])
 
-    assert reopened.messages == tuple(exchange)
+    assert reopened.conversation == tuple(exchange)
 
 
 @pytest.mark.parametrize(
@@ -75,10 +75,10 @@ async def test_compacted_notes_are_the_content_and_survive_a_restart(tmp_path: P
 
     assert outcome == Compact(to_compress=tuple(exchange), to_keep=())
     assert memory.content() == notes
-    assert memory.messages == ()
+    assert memory.conversation == ()
     reopened, _ = _memory(tmp_path, [])
     assert reopened.content() == notes
-    assert reopened.messages == ()
+    assert reopened.conversation == ()
     journal = _journal(tmp_path)
     assert "absorbed 2 messages" in journal
     assert "[2026-10-04 Sun 14:32] Марта: Завтра до лікаря" in journal
@@ -99,7 +99,7 @@ async def test_compact_keeps_the_newest_tokens(tmp_path: Path) -> None:
 
     assert isinstance(outcome, Compact)
     assert outcome.to_compress == tuple(first)
-    assert memory.messages == (*second, *third)
+    assert memory.conversation == (*second, *third)
     [prompt] = llm.prompts
     assert "14:32" in prompt.turns[0].text
     assert "15:32" not in prompt.turns[0].text
@@ -129,7 +129,7 @@ async def test_nothing_to_compact_calls_no_model(tmp_path: Path) -> None:
     assert empty == NoAction()
     assert too_little == NoAction()
     assert llm.prompts == []
-    assert len(memory.messages) == 2
+    assert len(memory.conversation) == 2
 
 
 async def test_notes_with_a_wrong_heading_are_kept_with_a_warning(tmp_path: Path) -> None:
@@ -154,7 +154,7 @@ async def test_unavailable_model_leaves_memory_unchanged(tmp_path: Path) -> None
 
     assert outcome == NotAbsorbed("the model is unavailable: 503")
     assert memory.content() == ""
-    assert memory.messages == tuple(exchange)
+    assert memory.conversation == tuple(exchange)
     assert not (tmp_path / "notes.md").exists()
     journal = _journal(tmp_path)
     assert "could not absorb 2 messages: the model is unavailable: 503" in journal
@@ -169,7 +169,7 @@ async def test_incomplete_notes_are_not_kept_but_journaled(tmp_path: Path) -> No
 
     assert outcome == NotAbsorbed("the notes came back incomplete: finish reason MAX_TOKENS")
     assert memory.content() == ""
-    assert len(memory.messages) == 2
+    assert len(memory.conversation) == 2
     assert f"--- partial notes ---\n{_HEADING}\n- Лік" in _journal(tmp_path)
 
 
@@ -196,4 +196,4 @@ async def test_an_exchange_added_during_compaction_stays(tmp_path: Path) -> None
 
     await memory.compact(0)
 
-    assert memory.messages == tuple(later)
+    assert memory.conversation == tuple(later)

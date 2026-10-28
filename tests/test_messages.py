@@ -3,7 +3,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from kamerdyner.messages import Message, Role, format_time
+from kamerdyner.common.llm import Role
+from kamerdyner.common.messages import Message, format_time
 
 
 def test_format_time_shows_the_time_zone_the_moment_carries() -> None:

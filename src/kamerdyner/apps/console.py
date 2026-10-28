@@ -26,13 +26,13 @@ from google.genai import types
 
 from kamerdyner.apps.terminal import TypeAhead
 from kamerdyner.chat import Chat
-from kamerdyner.llm import GenerateResult, Incomplete, Reply, Unavailable
+from kamerdyner.common.llm import GenerateResult, Incomplete, Reply, Unavailable
+from kamerdyner.common.messages import utc_now
+from kamerdyner.common.store import ConversationLog, MessageFile
 from kamerdyner.llm.gemini import GeminiLLM, make_client
 from kamerdyner.memory import CompactionOutcome, NotAbsorbed
 from kamerdyner.memory.compaction import Compact, NoAction
 from kamerdyner.memory.notes import NotesMemory
-from kamerdyner.messages import utc_now
-from kamerdyner.store import ConversationLog, MessageFile
 from kamerdyner.users import load_user
 
 

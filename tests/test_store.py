@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 from fakes import make_message
 
-from kamerdyner.messages import Role
-from kamerdyner.store import ConversationLog, MessageFile
+from kamerdyner.common.llm import Role
+from kamerdyner.common.store import ConversationLog, MessageFile
 
 
 def _logged_texts(directory: Path) -> list[str]:

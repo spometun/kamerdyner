@@ -18,7 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from kamerdyner.messages import Message, Role
+from kamerdyner.common.llm import Role
+from kamerdyner.common.messages import Message
 
 logger = logging.getLogger(__name__)
 

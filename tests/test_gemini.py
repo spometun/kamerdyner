@@ -5,7 +5,7 @@ import logging
 import pytest
 from google.genai import types
 
-from kamerdyner.llm import Incomplete, Reply
+from kamerdyner.common.llm import Incomplete, Reply
 from kamerdyner.llm.gemini import _result  # pyright: ignore[reportPrivateUsage]
 
 

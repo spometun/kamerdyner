@@ -8,7 +8,7 @@ import httpx
 from google import genai
 from google.genai import errors, types
 
-from kamerdyner.llm import GenerateResult, Incomplete, Prompt, Reply, Turn, Unavailable
+from kamerdyner.common.llm import GenerateResult, Incomplete, Prompt, Reply, Turn, Unavailable
 
 logger = logging.getLogger(__name__)
 

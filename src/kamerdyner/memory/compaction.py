@@ -3,8 +3,9 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from kamerdyner.messages import Message, Role
-from kamerdyner.tokens import TokenCounter
+from kamerdyner.common.llm import Role
+from kamerdyner.common.messages import Message
+from kamerdyner.common.tokens import TokenCounter
 
 
 @dataclass(frozen=True)

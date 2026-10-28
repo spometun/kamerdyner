@@ -1,17 +1,13 @@
 """Messages of a conversation between a user and the assistant."""
 
-import enum
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from kamerdyner.common.llm import Role
+
 type Clock = Callable[[], datetime]
 """Returns the current time as an aware datetime."""
-
-
-class Role(enum.Enum):
-    USER = "user"
-    MODEL = "model"
 
 
 @dataclass(frozen=True)

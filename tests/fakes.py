@@ -4,11 +4,11 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from kamerdyner.llm import GenerateResult, Prompt
+from kamerdyner.common.llm import GenerateResult, Prompt, Role
+from kamerdyner.common.messages import Message
+from kamerdyner.common.tokens import ApproximateTokenCounter
 from kamerdyner.memory import CompactionOutcome
 from kamerdyner.memory.compaction import NoAction, conversation_tokens
-from kamerdyner.messages import Message, Role
-from kamerdyner.tokens import ApproximateTokenCounter
 from kamerdyner.users import User
 
 TORONTO = ZoneInfo("America/Toronto")
@@ -59,23 +59,23 @@ class FakeMemory:
 
     def __init__(self, text: str, messages: Sequence[Message] = ()) -> None:
         self.text = text
-        self.conversation = list(messages)
+        self._messages = list(messages)
         self.compactions: list[int] = []
         self.outcome: CompactionOutcome = NoAction()
 
     @property
-    def messages(self) -> tuple[Message, ...]:
-        return tuple(self.conversation)
+    def conversation(self) -> tuple[Message, ...]:
+        return tuple(self._messages)
 
     def content(self) -> str:
         return self.text
 
     def conversation_tokens(self) -> int:
         counter = ApproximateTokenCounter()
-        return conversation_tokens(self.conversation, counter)
+        return conversation_tokens(self._messages, counter)
 
     def add(self, exchange: Sequence[Message]) -> None:
-        self.conversation.extend(exchange)
+        self._messages.extend(exchange)
 
     async def compact(self, keep_tokens: int) -> CompactionOutcome:
         self.compactions.append(keep_tokens)
