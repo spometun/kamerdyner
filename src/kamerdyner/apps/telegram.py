@@ -33,9 +33,9 @@ from aiogram.types import Message as TelegramMessage
 from dotenv import load_dotenv
 from google.genai import types
 
-from kamerdyner.chat import Chat, utc_now
+from kamerdyner.chat import Chat, ConversationLog, utc_now
 from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, Reply, Unavailable
-from kamerdyner.common.store import ConversationLog, MessageFile
+from kamerdyner.common.store import MessageFile
 from kamerdyner.llm.gemini import GeminiLLM, make_client
 from kamerdyner.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory

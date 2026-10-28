@@ -1,14 +1,17 @@
 """One user's chat with the assistant: the incoming messages, their memory and the model put
-together."""
+together, and the archive of everything said."""
 
+import json
 import logging
+import os
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import assert_never
 
 from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, Reply, Role, Unavailable
 from kamerdyner.common.messages import Message
-from kamerdyner.common.store import ConversationLog, MessageFile
+from kamerdyner.common.store import MessageFile
 from kamerdyner.memory import CompactionOutcome, Memory
 from kamerdyner.prompt import build_prompt
 from kamerdyner.users import User
@@ -21,6 +24,26 @@ type Clock = Callable[[], datetime]
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+class ConversationLog:
+    """The archive of every message, one JSON object per line in `log.jsonl`, in the format of
+    `kamerdyner.common.store`; appended to durably, never read on the way to the model."""
+
+    def __init__(self, directory: Path) -> None:
+        self._path = directory / "log.jsonl"
+        directory.mkdir(parents=True, exist_ok=True)
+        _drop_torn_tail(self._path)
+
+    def append(self, message: Message) -> None:
+        """Once this returns, the message survives a crash."""
+        record = _record(message)
+        line = json.dumps(record, ensure_ascii=False)
+        with self._path.open("a", encoding="utf-8") as file:
+            file.write(line + "\n")
+            file.flush()
+            descriptor = file.fileno()
+            os.fsync(descriptor)
 
 
 class Chat:
@@ -138,3 +161,25 @@ class Chat:
                 self._user.id,
             )
             self._pending.replace(waiting)
+
+
+def _record(message: Message) -> dict[str, str]:
+    return {"role": message.role.value, "text": message.text, "at": message.at.isoformat()}
+
+
+def _drop_torn_tail(path: Path) -> None:
+    """Cuts off a last line left unfinished by a crash mid-write. Such a message was never
+    acknowledged as stored, and appending after it would glue two records into one line."""
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
+        return
+    end = data.rfind(b"\n") + 1
+    if end == len(data):
+        return
+    logger.warning("Dropping a torn last line of %s: %r", path, data[end:])
+    with path.open("r+b") as file:
+        file.truncate(end)
+        file.flush()
+        descriptor = file.fileno()
+        os.fsync(descriptor)

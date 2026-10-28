@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from fakes import FakeClock, FakeMemory, make_user
 
-from kamerdyner.chat import Chat
+from kamerdyner.chat import Chat, ConversationLog
 from kamerdyner.common.llm import GenerateResult, Prompt, Reply, Unavailable
-from kamerdyner.common.store import ConversationLog, MessageFile
+from kamerdyner.common.store import MessageFile
 from kamerdyner.session import Session
 
 

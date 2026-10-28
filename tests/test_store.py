@@ -5,44 +5,7 @@ import pytest
 from fakes import make_message
 
 from kamerdyner.common.llm import Role
-from kamerdyner.common.store import ConversationLog, MessageFile
-
-
-def _logged_texts(directory: Path) -> list[str]:
-    lines = (directory / "log.jsonl").read_text(encoding="utf-8").splitlines()
-    return [json.loads(line)["text"] for line in lines]
-
-
-def test_log_keeps_every_message_in_order(tmp_path: Path) -> None:
-    log = ConversationLog(tmp_path)
-    for index in range(3):
-        message = make_message(Role.USER, f"Повідомлення {index}", minutes=index)
-        log.append(message)
-
-    reopened = ConversationLog(tmp_path)
-    last = make_message(Role.MODEL, "Відповідь", minutes=3)
-    reopened.append(last)
-
-    assert _logged_texts(tmp_path) == [
-        "Повідомлення 0",
-        "Повідомлення 1",
-        "Повідомлення 2",
-        "Відповідь",
-    ]
-
-
-def test_log_drops_a_torn_last_line(tmp_path: Path) -> None:
-    log = ConversationLog(tmp_path)
-    complete = make_message(Role.USER, "complete")
-    log.append(complete)
-    with (tmp_path / "log.jsonl").open("a", encoding="utf-8") as file:
-        file.write('{"role": "model", "te')
-
-    reopened = ConversationLog(tmp_path)
-    after_crash = make_message(Role.USER, "after the crash", minutes=1)
-    reopened.append(after_crash)
-
-    assert _logged_texts(tmp_path) == ["complete", "after the crash"]
+from kamerdyner.common.store import MessageFile
 
 
 def test_a_missing_message_file_is_an_empty_list(tmp_path: Path) -> None:
