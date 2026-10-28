@@ -5,8 +5,7 @@ from fakes import ScriptedLLM, make_message
 
 from kamerdyner.common.llm import GenerateResult, Incomplete, Prompt, Reply, Role, Unavailable
 from kamerdyner.common.messages import Message
-from kamerdyner.memory import NotAbsorbed
-from kamerdyner.memory.compaction import Compact, NoAction
+from kamerdyner.memory import Compacted, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory
 
 _HEADING = "## [2026-10-04 Sun 14:32] — [2026-10-04 Sun 14:33]"
@@ -73,7 +72,7 @@ async def test_compacted_notes_are_the_content_and_survive_a_restart(tmp_path: P
 
     outcome = await memory.compact(0)
 
-    assert outcome == Compact(to_compress=tuple(exchange), to_keep=())
+    assert outcome == Compacted(moved=2, kept=0)
     assert memory.content() == notes
     assert memory.conversation == ()
     reopened, _ = _memory(tmp_path, [])
@@ -97,8 +96,7 @@ async def test_compact_keeps_the_newest_tokens(tmp_path: Path) -> None:
 
     outcome = await memory.compact(300)
 
-    assert isinstance(outcome, Compact)
-    assert outcome.to_compress == tuple(first)
+    assert outcome == Compacted(moved=2, kept=4)
     assert memory.conversation == (*second, *third)
     [prompt] = llm.prompts
     assert "14:32" in prompt.turns[0].text
@@ -126,8 +124,8 @@ async def test_nothing_to_compact_calls_no_model(tmp_path: Path) -> None:
     memory.add(_exchange())
     too_little = await memory.compact(10_000)
 
-    assert empty == NoAction()
-    assert too_little == NoAction()
+    assert empty == NothingToCompact()
+    assert too_little == NothingToCompact()
     assert llm.prompts == []
     assert len(memory.conversation) == 2
 
@@ -138,7 +136,7 @@ async def test_notes_with_a_wrong_heading_are_kept_with_a_warning(tmp_path: Path
 
     outcome = await memory.compact(0)
 
-    assert isinstance(outcome, Compact)
+    assert outcome == Compacted(moved=2, kept=0)
     assert memory.content() == "- без заголовка"
     journal = _journal(tmp_path)
     assert "--- warning ---" in journal

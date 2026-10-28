@@ -20,8 +20,7 @@ from typing import assert_never
 from kamerdyner.common.llm import LLM, Incomplete, Reply, Role, Unavailable
 from kamerdyner.common.messages import Message, format_time
 from kamerdyner.common.store import MessageFile, write_atomically
-from kamerdyner.common.tokens import ApproximateTokenCounter
-from kamerdyner.memory import CompactionOutcome, NotAbsorbed
+from kamerdyner.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.compaction import Compact, NoAction, conversation_tokens, split_newest
 from kamerdyner.memory.summary import span_heading, summarize, transcript
 
@@ -42,7 +41,6 @@ class NotesMemory:
         self._journal_path = directory / "memory.log"
         self._name = name
         self._llm = llm
-        self._counter = ApproximateTokenCounter()
         self._notes = _load_notes(self._notes_path)
 
     @property
@@ -53,7 +51,7 @@ class NotesMemory:
         return self._notes.rstrip("\n")
 
     def conversation_tokens(self) -> int:
-        return conversation_tokens(self._conversation.messages, self._counter)
+        return conversation_tokens(self._conversation.messages)
 
     def add(self, exchange: Sequence[Message]) -> None:
         roles = [message.role for message in exchange]
@@ -69,10 +67,10 @@ class NotesMemory:
     async def compact(self, keep_tokens: int) -> CompactionOutcome:
         """The conversation is cut only once the notes on the older stretch are stored; when the
         model fails to write them, memory stays as it was."""
-        plan = split_newest(self._conversation.messages, self._counter, keep_tokens)
+        plan = split_newest(self._conversation.messages, keep_tokens)
         match plan:
             case NoAction():
-                return plan
+                return NothingToCompact()
             case Compact(to_compress=to_compress):
                 absorbed = await self._absorb(to_compress)
                 match absorbed:
@@ -85,7 +83,7 @@ class NotesMemory:
                             self._name,
                             len(remaining),
                         )
-                        return plan
+                        return Compacted(moved=len(to_compress), kept=len(remaining))
                     case NotAbsorbed():
                         return absorbed
                     case _:

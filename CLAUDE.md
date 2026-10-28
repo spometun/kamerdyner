@@ -19,7 +19,7 @@ them, and keep this section current.
 
 Code: the library is `src/kamerdyner/`. `common/` is the shared base and depends on nothing
 else of ours: messages (their times carry the user's local zone), the LLM interface, messages on
-disk, token counting. `memory/` depends only on `common/`, so it can later become a package of its
+disk. `memory/` depends only on `common/`, so it can later become a package of its
 own: the `Memory` interface (recent conversation of whole exchanges, long-term content, `add`,
 `compact(keep_tokens)`), one module per implementation and per way of compressing (now `notes.py`
 over the first compression, `summary.py`) and the choice of the cut (`compaction.py`); an

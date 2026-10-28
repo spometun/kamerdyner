@@ -25,13 +25,11 @@ from dotenv import load_dotenv
 from google.genai import types
 
 from kamerdyner.apps.terminal import TypeAhead
-from kamerdyner.chat import Chat
+from kamerdyner.chat import Chat, utc_now
 from kamerdyner.common.llm import GenerateResult, Incomplete, Reply, Unavailable
-from kamerdyner.common.messages import utc_now
 from kamerdyner.common.store import ConversationLog, MessageFile
 from kamerdyner.llm.gemini import GeminiLLM, make_client
-from kamerdyner.memory import CompactionOutcome, NotAbsorbed
-from kamerdyner.memory.compaction import Compact, NoAction
+from kamerdyner.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory
 from kamerdyner.users import load_user
 
@@ -95,9 +93,9 @@ def main() -> None:
             with type_ahead.collecting():
                 outcome = runner.run(compacting)
             match outcome:
-                case NoAction():
+                case NothingToCompact():
                     pass
-                case Compact() | NotAbsorbed():
+                case Compacted() | NotAbsorbed():
                     _show_compaction(outcome, chat)
                 case _:
                     assert_never(outcome)
@@ -141,11 +139,11 @@ def _run_command(
 
 def _show_compaction(outcome: CompactionOutcome, chat: Chat) -> None:
     match outcome:
-        case NoAction():
+        case NothingToCompact():
             print("\n[nothing to compact]")
-        case Compact(to_compress=to_compress, to_keep=to_keep):
+        case Compacted(moved=moved, kept=kept):
             print(
-                f"\n[moved {len(to_compress)} messages into memory, {len(to_keep)} messages "
+                f"\n[moved {moved} messages into memory, {kept} messages "
                 f"(~{chat.conversation_tokens} tokens) remain]"
             )
         case NotAbsorbed(reason=reason):

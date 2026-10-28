@@ -33,13 +33,11 @@ from aiogram.types import Message as TelegramMessage
 from dotenv import load_dotenv
 from google.genai import types
 
-from kamerdyner.chat import Chat
+from kamerdyner.chat import Chat, utc_now
 from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, Reply, Unavailable
-from kamerdyner.common.messages import utc_now
 from kamerdyner.common.store import ConversationLog, MessageFile
 from kamerdyner.llm.gemini import GeminiLLM, make_client
-from kamerdyner.memory import CompactionOutcome, NotAbsorbed
-from kamerdyner.memory.compaction import Compact, NoAction
+from kamerdyner.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory
 from kamerdyner.session import Session
 from kamerdyner.users import User, load_user
@@ -293,10 +291,10 @@ def _reply_text(result: GenerateResult) -> str:
 
 def _compaction_report(outcome: CompactionOutcome) -> str:
     match outcome:
-        case NoAction():
+        case NothingToCompact():
             return "Немає чого переносити в пам'ять."
-        case Compact(to_compress=to_compress):
-            return f"Переніс у пам'ять повідомлень: {len(to_compress)}."
+        case Compacted(moved=moved):
+            return f"Переніс у пам'ять повідомлень: {moved}."
         case NotAbsorbed(reason=reason):
             return f"Не вдалося перенести в пам'ять, розмова лишилась як була: {reason}"
         case _:

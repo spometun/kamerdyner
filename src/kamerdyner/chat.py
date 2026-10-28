@@ -2,18 +2,25 @@
 together."""
 
 import logging
-from collections.abc import Sequence
-from datetime import datetime
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from typing import assert_never
 
 from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, Reply, Role, Unavailable
-from kamerdyner.common.messages import Clock, Message
+from kamerdyner.common.messages import Message
 from kamerdyner.common.store import ConversationLog, MessageFile
 from kamerdyner.memory import CompactionOutcome, Memory
 from kamerdyner.prompt import build_prompt
 from kamerdyner.users import User
 
 logger = logging.getLogger(__name__)
+
+type Clock = Callable[[], datetime]
+"""Returns the current time as an aware datetime."""
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class Chat:

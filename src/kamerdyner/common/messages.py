@@ -1,13 +1,9 @@
 """Messages of a conversation between a user and the assistant."""
 
-from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 
 from kamerdyner.common.llm import Role
-
-type Clock = Callable[[], datetime]
-"""Returns the current time as an aware datetime."""
 
 
 @dataclass(frozen=True)
@@ -28,10 +24,6 @@ def format_time(at: datetime) -> str:
     """`2026-10-04 Sun 14:32`, in the time zone `at` carries."""
     weekday = _WEEKDAYS[at.weekday()]
     return f"{at:%Y-%m-%d} {weekday} {at:%H:%M}"
-
-
-def utc_now() -> datetime:
-    return datetime.now(UTC)
 
 
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")

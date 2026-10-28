@@ -15,7 +15,20 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from kamerdyner.common.messages import Message
-from kamerdyner.memory.compaction import Compact, NoAction
+
+
+@dataclass(frozen=True)
+class NothingToCompact:
+    """No cut leaves enough of the newest conversation; nothing moved."""
+
+
+@dataclass(frozen=True)
+class Compacted:
+    """`moved` messages went from the recent conversation into long-term memory; `kept`
+    remain."""
+
+    moved: int
+    kept: int
 
 
 @dataclass(frozen=True)
@@ -26,9 +39,8 @@ class NotAbsorbed:
     reason: str
 
 
-type CompactionOutcome = NoAction | Compact | NotAbsorbed
-"""What `Memory.compact` did: nothing, the plan carried out, or nothing because long-term memory
-could not take the messages."""
+type CompactionOutcome = NothingToCompact | Compacted | NotAbsorbed
+"""What `Memory.compact` did."""
 
 
 class Memory(Protocol):

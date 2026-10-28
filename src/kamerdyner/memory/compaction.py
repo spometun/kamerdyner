@@ -1,11 +1,11 @@
 """Choosing which part of the recent conversation goes to long-term memory."""
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from kamerdyner.common.llm import Role
 from kamerdyner.common.messages import Message
-from kamerdyner.common.tokens import TokenCounter
 
 
 @dataclass(frozen=True)
@@ -28,14 +28,15 @@ class Compact:
 type CompactionPlan = NoAction | Compact
 
 
-def conversation_tokens(messages: Sequence[Message], counter: TokenCounter) -> int:
-    sizes = [counter.count(message.text) for message in messages]
+def conversation_tokens(messages: Sequence[Message]) -> int:
+    """The size of the messages' texts in model tokens, estimated without the model's tokenizer
+    from the UTF-8 size, so Cyrillic (two bytes a character) weighs more than Latin, as it does
+    for real tokenizers. A rough estimate, erring towards more tokens."""
+    sizes = [_tokens(message.text) for message in messages]
     return sum(sizes)
 
 
-def split_newest(
-    messages: Sequence[Message], counter: TokenCounter, keep_tokens: int
-) -> CompactionPlan:
+def split_newest(messages: Sequence[Message], keep_tokens: int) -> CompactionPlan:
     """Splits off the oldest messages, as many as leave at least `keep_tokens` of the newest,
     cutting only right after a reply of the model; `NoAction` when no such cut exists.
 
@@ -52,5 +53,13 @@ def split_newest(
             to_compress = tuple(messages[:cut])
             to_keep = tuple(messages[cut:])
             return Compact(to_compress=to_compress, to_keep=to_keep)
-        kept += counter.count(messages[cut - 1].text)
+        kept += _tokens(messages[cut - 1].text)
     return NoAction()
+
+
+_BYTES_PER_TOKEN = 4
+
+
+def _tokens(text: str) -> int:
+    encoded = text.encode("utf-8")
+    return math.ceil(len(encoded) / _BYTES_PER_TOKEN)
