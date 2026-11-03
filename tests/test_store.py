@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from pathlib import Path
 
@@ -47,3 +48,29 @@ def test_corrupted_message_file_names_the_message(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="message 1"):
         MessageFile(tmp_path / "latest.json")
+
+
+def test_only_an_ephemeral_message_stores_the_flag_and_it_survives_reopening(
+    tmp_path: Path,
+) -> None:
+    question = make_message(Role.USER, "Яка версія Python?", minutes=0)
+    plain = make_message(Role.MODEL, "Перевірю.", minutes=1)
+    ephemeral = make_message(Role.MODEL, "3.15.2", minutes=2)
+    ephemeral = dataclasses.replace(ephemeral, ephemeral=True)
+    path = tmp_path / "latest.json"
+    MessageFile(path).replace([question, plain, ephemeral])
+
+    records = json.loads(path.read_text(encoding="utf-8"))["messages"]
+    reopened = MessageFile(path)
+
+    assert ["ephemeral" in record for record in records] == [False, False, True]
+    assert reopened.messages == (question, plain, ephemeral)
+
+
+def test_a_non_boolean_ephemeral_flag_is_corruption(tmp_path: Path) -> None:
+    path = tmp_path / "latest.json"
+    record = {"role": "model", "text": "x", "at": "2026-10-04T14:32:00-04:00", "ephemeral": "yes"}
+    path.write_text(json.dumps({"messages": [record]}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="message 0"):
+        MessageFile(path)

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import assert_never
 
 from kamerdyner.common.llm import LLM, Incomplete, Reply, Role, Unavailable
-from kamerdyner.common.messages import Message, format_time
+from kamerdyner.common.messages import Message, format_time, without_ephemeral_text
 from kamerdyner.common.store import MessageFile, write_atomically
 from kamerdyner.memory.impl.compaction import conversation_tokens, split_newest
 from kamerdyner.memory.impl.summary import span_heading, summarize, transcript
@@ -86,7 +86,9 @@ class NotesMemory:
             case _:
                 assert_never(absorbed)
 
-    async def _absorb(self, messages: Sequence[Message]) -> "_Absorbed | NotAbsorbed":
+    async def _absorb(self, original: Sequence[Message]) -> "_Absorbed | NotAbsorbed":
+        """Ephemeral messages reach the notes and the journal only as a note that there was one."""
+        messages = [without_ephemeral_text(message) for message in original]
         conversation = transcript(self._name, messages)
         result = await summarize(self._llm, self._name, messages)
         match result:

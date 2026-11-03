@@ -1,3 +1,4 @@
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -169,3 +170,22 @@ async def test_incomplete_notes_are_not_kept_but_journaled(tmp_path: Path) -> No
     assert memory.content() == ""
     assert len(memory.conversation) == 2
     assert f"--- partial notes ---\n{_HEADING}\n- Лік" in _journal(tmp_path)
+
+
+async def test_an_ephemeral_reply_reaches_neither_the_notes_model_nor_the_journal(
+    tmp_path: Path,
+) -> None:
+    memory, llm = _memory(tmp_path, [Reply(f"{_HEADING}\n- Марта питала про версію Python.")])
+    question = make_message(Role.USER, "Яка остання версія Python?", minutes=0)
+    answer = make_message(Role.MODEL, "Python 3.15.2", minutes=1)
+    answer = dataclasses.replace(answer, ephemeral=True)
+    memory.add([question, answer])
+
+    outcome = await memory.compact(0)
+
+    assert outcome == Compacted(moved=2, kept=0)
+    sent = llm.prompts[0].turns[0].text
+    assert "Яка остання версія Python?" in sent
+    assert "3.15.2" not in sent
+    assert "[Kamerdyner answered from a web search" in sent
+    assert "3.15.2" not in _journal(tmp_path)

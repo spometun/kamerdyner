@@ -216,3 +216,17 @@ def test_log_drops_a_torn_last_line(tmp_path: Path) -> None:
     reopened.append(after_crash)
 
     assert _logged_texts(tmp_path) == ["complete", "after the crash"]
+
+
+async def test_a_grounded_reply_is_remembered_whole_but_archived_without_its_text(
+    tmp_path: Path,
+) -> None:
+    setup = _Setup(tmp_path, [Reply("Python 3.15.2", grounded=True)])
+
+    await setup.chat.send("Яка остання версія Python?")
+
+    assert setup.memory_texts() == ["Яка остання версія Python?", "Python 3.15.2"]
+    assert setup.memory.conversation[-1].ephemeral
+    logged = setup.logged_texts()
+    assert logged[0] == "Яка остання версія Python?"
+    assert logged[1].startswith("[Kamerdyner answered from a web search")

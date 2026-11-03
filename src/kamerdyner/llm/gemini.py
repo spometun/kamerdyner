@@ -16,16 +16,23 @@ logger = logging.getLogger(__name__)
 class GeminiLLM:
     """Generates with one Gemini model at a fixed thinking level and a fixed sampling seed, so
     the same prompt gets the same reply (best effort on Google's side, and only for the same
-    model version). Retries of transient failures (429, 5xx, timeouts) are configured on the
-    client; what still fails comes back as a value."""
+    model version). With `web`, the model may search Google and read the pages it is given, when
+    it decides to; such a reply is `grounded`. Retries of transient failures (429, 5xx, timeouts)
+    are configured on the client; what still fails comes back as a value."""
 
     def __init__(
-        self, client: genai.Client, model: str, thinking_level: types.ThinkingLevel, seed: int
+        self,
+        client: genai.Client,
+        model: str,
+        thinking_level: types.ThinkingLevel,
+        seed: int,
+        web: bool,
     ) -> None:
         self._client = client
         self._model = model
         self._thinking_level = thinking_level
         self._seed = seed
+        self._tools = _web_tools() if web else None
 
     async def generate(self, prompt: Prompt) -> GenerateResult:
         contents = _contents(prompt.turns)
@@ -37,6 +44,7 @@ class GeminiLLM:
             thinking_config=thinking,
             automatic_function_calling=manual_calls,
             seed=self._seed,
+            tools=self._tools,
         )
         try:
             # The SDK's signature mentions PIL images, unknown without Pillow installed.
@@ -79,7 +87,8 @@ def _result(response: types.GenerateContentResponse) -> GenerateResult:
     text = _answer_text(candidate)
     finish_reason = candidate.finish_reason
     if finish_reason is types.FinishReason.STOP and text:
-        return Reply(text=text)
+        grounded = _grounded(candidate)
+        return Reply(text=text, grounded=grounded)
     return Incomplete(reason=f"finish reason {finish_reason}, {len(text)} chars", partial_text=text)
 
 
@@ -98,6 +107,28 @@ def _answer_text(candidate: types.Candidate) -> str:
         elif part.text is not None:
             texts.append(part.text)
     return "".join(texts)
+
+
+def _web_tools() -> list[types.Tool]:
+    search = types.Tool(google_search=types.GoogleSearch())
+    pages = types.Tool(url_context=types.UrlContext())
+    return [search, pages]
+
+
+def _grounded(candidate: types.Candidate) -> bool:
+    """Whether the answer rests on a Google search or on pages it read; what was searched and
+    read is logged."""
+    metadata = candidate.grounding_metadata
+    # Without web tools, or when the model used none, the metadata is absent or empty.
+    if metadata is None:
+        return False
+    queries = [] if metadata.web_search_queries is None else metadata.web_search_queries
+    chunks = [] if metadata.grounding_chunks is None else metadata.grounding_chunks
+    pages = [chunk.web.uri for chunk in chunks if chunk.web is not None]
+    if not queries and not pages:
+        return False
+    logger.info("Grounded on searches %s, pages %s", queries, pages)
+    return True
 
 
 def _log_usage(response: types.GenerateContentResponse) -> None:

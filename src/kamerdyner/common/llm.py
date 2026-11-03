@@ -52,9 +52,11 @@ class Prompt:
 
 @dataclass(frozen=True)
 class Reply:
-    """The model answered in full."""
+    """The model answered in full. `grounded`: the answer rests on what the model found on the
+    web, by searching or by reading a page it was given."""
 
     text: str
+    grounded: bool = False
 
 
 @dataclass(frozen=True)

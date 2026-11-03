@@ -2,7 +2,8 @@
 {"messages": [...]} and rewritten whole on every change.
 
 A message is stored as {"role": "user" | "model", "text": "...", "at": "<ISO 8601>"}, the time
-with the user's local offset: "2026-10-04T14:32:00-04:00".
+with the user's local offset: "2026-10-04T14:32:00-04:00", plus "ephemeral": true on an ephemeral
+message (absent means false).
 """
 
 import json
@@ -36,10 +37,22 @@ class MessageFile:
 
     def replace(self, messages: Sequence[Message]) -> None:
         """Makes `messages` the whole list."""
-        records = [_record(message) for message in messages]
+        records = [message_record(message) for message in messages]
         text = json.dumps({"messages": records}, ensure_ascii=False, indent=1)
         write_atomically(self._path, text)
         self._messages = tuple(messages)
+
+
+def message_record(message: Message) -> dict[str, str | bool]:
+    """`message` as the JSON object it is stored as."""
+    record: dict[str, str | bool] = {
+        "role": message.role.value,
+        "text": message.text,
+        "at": message.at.isoformat(),
+    }
+    if message.ephemeral:
+        record["ephemeral"] = True
+    return record
 
 
 def write_atomically(path: Path, text: str) -> None:
@@ -51,10 +64,6 @@ def write_atomically(path: Path, text: str) -> None:
         descriptor = file.fileno()
         os.fsync(descriptor)
     os.replace(temporary, path)
-
-
-def _record(message: Message) -> dict[str, str]:
-    return {"role": message.role.value, "text": message.text, "at": message.at.isoformat()}
 
 
 def _load_messages(path: Path) -> tuple[Message, ...]:
@@ -84,9 +93,13 @@ def _message(record: Any, path: Path, index: int) -> Message:
             pass
         case _:
             raise ValueError(f"Corrupted message file {path}: message {index} is {record!r}")
+    # Optional: only ephemeral messages carry it.
+    ephemeral = record.get("ephemeral", False)
+    if not isinstance(ephemeral, bool):
+        raise ValueError(f"Corrupted message file {path}: message {index} is {record!r}")
     try:
         parsed_role = Role(role)
         parsed_at = datetime.fromisoformat(at)
-        return Message(role=parsed_role, text=text, at=parsed_at)
+        return Message(role=parsed_role, text=text, at=parsed_at, ephemeral=ephemeral)
     except ValueError as error:
         raise ValueError(f"Corrupted message file {path}: message {index}: {error}") from error

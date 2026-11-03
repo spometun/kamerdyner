@@ -101,3 +101,39 @@ def test_blocked_prompt_is_incomplete() -> None:
 
     assert isinstance(result, Incomplete)
     assert "SAFETY" in result.reason
+
+
+def _grounded_response(metadata: types.GroundingMetadata) -> types.GenerateContentResponse:
+    part = _signed("Python 3.15.2")
+    content = types.Content(role="model", parts=[part])
+    candidate = types.Candidate(
+        content=content, finish_reason=types.FinishReason.STOP, grounding_metadata=metadata
+    )
+    return types.GenerateContentResponse(candidates=[candidate])
+
+
+def test_an_answer_after_a_search_is_grounded() -> None:
+    source = types.GroundingChunkWeb(uri="https://example.com/r", title="python.org")
+    chunk = types.GroundingChunk(web=source)
+    metadata = types.GroundingMetadata(
+        web_search_queries=["latest python release"], grounding_chunks=[chunk]
+    )
+    response = _grounded_response(metadata)
+
+    assert _result(response) == Reply("Python 3.15.2", grounded=True)
+
+
+def test_an_answer_from_a_page_it_read_is_grounded() -> None:
+    page = types.GroundingChunkWeb(uri="https://docs.python.org/3/whatsnew/", title="What's New")
+    chunk = types.GroundingChunk(web=page)
+    metadata = types.GroundingMetadata(grounding_chunks=[chunk])
+    response = _grounded_response(metadata)
+
+    assert _result(response) == Reply("Python 3.15.2", grounded=True)
+
+
+def test_empty_grounding_metadata_is_not_grounded() -> None:
+    metadata = types.GroundingMetadata()
+    response = _grounded_response(metadata)
+
+    assert _result(response) == Reply("Python 3.15.2", grounded=False)

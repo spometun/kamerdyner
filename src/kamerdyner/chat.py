@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import assert_never
 
 from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, Reply, Role, Unavailable
-from kamerdyner.common.messages import Message
-from kamerdyner.common.store import MessageFile
+from kamerdyner.common.messages import Message, without_ephemeral_text
+from kamerdyner.common.store import MessageFile, message_record
 from kamerdyner.memory.memory import CompactionOutcome, Memory
 from kamerdyner.prompt import build_prompt
 from kamerdyner.users import User
@@ -28,7 +28,8 @@ def utc_now() -> datetime:
 
 class ConversationLog:
     """The archive of every message, one JSON object per line in `log.jsonl`, in the format of
-    `kamerdyner.common.store`; appended to durably, never read on the way to the model."""
+    `kamerdyner.common.store`; appended to durably, never read on the way to the model. An
+    ephemeral message is archived without its text (`without_ephemeral_text`)."""
 
     def __init__(self, directory: Path) -> None:
         self._path = directory / "log.jsonl"
@@ -37,7 +38,8 @@ class ConversationLog:
 
     def append(self, message: Message) -> None:
         """Once this returns, the message survives a crash."""
-        record = _record(message)
+        archived = without_ephemeral_text(message)
+        record = message_record(archived)
         line = json.dumps(record, ensure_ascii=False)
         with self._path.open("a", encoding="utf-8") as file:
             file.write(line + "\n")
@@ -105,9 +107,13 @@ class Chat:
         prompt = build_prompt(self._user, memory, conversation)
         result = await self._llm.generate(prompt)
         match result:
-            case Reply(text=reply_text):
+            case Reply(text=reply_text, grounded=grounded):
                 answered_at = self._now()
-                reply = Message(role=Role.MODEL, text=reply_text, at=answered_at)
+                # Search results may be shown and kept for the conversation, not archived or learned
+                # from: a grounded reply is ephemeral.
+                reply = Message(
+                    role=Role.MODEL, text=reply_text, at=answered_at, ephemeral=grounded
+                )
                 self._log.append(reply)
                 exchange = (*seen, reply)
                 # Memory first: a crash before the next line leaves the exchange in both, and
@@ -161,10 +167,6 @@ class Chat:
                 self._user.id,
             )
             self._pending.replace(waiting)
-
-
-def _record(message: Message) -> dict[str, str]:
-    return {"role": message.role.value, "text": message.text, "at": message.at.isoformat()}
 
 
 def _drop_torn_tail(path: Path) -> None:
