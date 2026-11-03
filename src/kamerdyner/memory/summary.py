@@ -62,6 +62,8 @@ Rules:
 - Turn relative times into dates: "tomorrow" said on 2026-10-04 is 2026-10-05. Keep the time \
 of day when it matters.
 - Note plans and promises with their dates, {name}'s and your own.
+- Always note what {name} asked of you about how to behave — how to address them (their \
+name, "ти" or "ви"), your tone, language or length — so you keep doing it.
 - Quote a short phrase of {name}'s when how they said it matters.
 - Keep what is worth remembering later. Skip greetings and empty small talk. For general \
 answers that can be given again (a recipe, how something works), note that you gave it and \
