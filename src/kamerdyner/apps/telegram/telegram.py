@@ -51,7 +51,7 @@ def main() -> None:
 
     client = make_client(api_key, timeout_seconds=120, attempts=3)
     # A fixed seed makes replies repeatable: a change in them comes from our prompt or code.
-    llm = GeminiLLM(client, model, types.ThinkingLevel.LOW, seed=0, web=True)
+    llm = GeminiLLM(client, model, types.ThinkingLevel.MEDIUM, seed=0, web=True)
     memory_llm = GeminiLLM(client, model, types.ThinkingLevel.HIGH, seed=0, web=False)
     serving = serve(token, directories, llm, memory_llm)
     asyncio.run(serving)
