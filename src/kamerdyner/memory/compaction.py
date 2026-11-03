@@ -2,30 +2,9 @@
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from kamerdyner.common.llm import Role
 from kamerdyner.common.messages import Message
-
-
-@dataclass(frozen=True)
-class NoAction:
-    """The conversation stays as it is."""
-
-
-@dataclass(frozen=True)
-class Compact:
-    """The older messages `to_compress` go to memory; `to_keep` stay in the conversation.
-
-    Together they are the whole conversation, in order. The cut falls right after a reply of the
-    model, so no exchange — the user's message(s) and the reply to them — is split.
-    """
-
-    to_compress: tuple[Message, ...]
-    to_keep: tuple[Message, ...]
-
-
-type CompactionPlan = NoAction | Compact
 
 
 def conversation_tokens(messages: Sequence[Message]) -> int:
@@ -36,9 +15,13 @@ def conversation_tokens(messages: Sequence[Message]) -> int:
     return sum(sizes)
 
 
-def split_newest(messages: Sequence[Message], keep_tokens: int) -> CompactionPlan:
-    """Splits off the oldest messages, as many as leave at least `keep_tokens` of the newest,
-    cutting only right after a reply of the model; `NoAction` when no such cut exists.
+def split_newest(
+    messages: Sequence[Message], keep_tokens: int
+) -> tuple[tuple[Message, ...], tuple[Message, ...]]:
+    """Splits the messages into the oldest, to compress, and the newest, to keep — together the
+    whole conversation, in order. The cut falls as late as leaves at least `keep_tokens` of the
+    newest, and only right after a reply of the model, so no exchange — the user's message(s) and
+    the reply to them — is split. Without such a cut there is nothing to compress.
 
     Moving everything older at once rather than just an overflow keeps compaction rare: memory
     gets fewer, fuller entries, and the start of the prompt stays stable between compactions. An
@@ -50,11 +33,9 @@ def split_newest(messages: Sequence[Message], keep_tokens: int) -> CompactionPla
     for cut in range(len(messages), 0, -1):
         after_reply = messages[cut - 1].role is Role.MODEL
         if kept >= keep_tokens and after_reply:
-            to_compress = tuple(messages[:cut])
-            to_keep = tuple(messages[cut:])
-            return Compact(to_compress=to_compress, to_keep=to_keep)
+            return tuple(messages[:cut]), tuple(messages[cut:])
         kept += _tokens(messages[cut - 1].text)
-    return NoAction()
+    return (), tuple(messages)
 
 
 _BYTES_PER_TOKEN = 4

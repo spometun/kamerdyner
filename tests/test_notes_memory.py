@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from fakes import ScriptedLLM, make_message
 
-from kamerdyner.common.llm import GenerateResult, Incomplete, Prompt, Reply, Role, Unavailable
+from kamerdyner.common.llm import GenerateResult, Incomplete, Reply, Role, Unavailable
 from kamerdyner.common.messages import Message
 from kamerdyner.memory import Compacted, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory
@@ -169,29 +169,3 @@ async def test_incomplete_notes_are_not_kept_but_journaled(tmp_path: Path) -> No
     assert memory.content() == ""
     assert len(memory.conversation) == 2
     assert f"--- partial notes ---\n{_HEADING}\n- Лік" in _journal(tmp_path)
-
-
-class _AddingLLM:
-    """Writes the notes, but first runs `meanwhile` — an exchange added while it writes."""
-
-    def __init__(self, notes: str, meanwhile: list[Message], memory: list[NotesMemory]) -> None:
-        self._notes = notes
-        self._meanwhile = meanwhile
-        self._memory = memory
-
-    async def generate(self, prompt: Prompt) -> GenerateResult:
-        self._memory[0].add(self._meanwhile)
-        return Reply(self._notes)
-
-
-async def test_an_exchange_added_during_compaction_stays(tmp_path: Path) -> None:
-    later = _exchange(minutes=60)
-    holder: list[NotesMemory] = []
-    llm = _AddingLLM(f"{_HEADING}\n- перше", later, holder)
-    memory = NotesMemory(tmp_path, "Марта", llm)
-    holder.append(memory)
-    memory.add(_exchange())
-
-    await memory.compact(0)
-
-    assert memory.conversation == tuple(later)

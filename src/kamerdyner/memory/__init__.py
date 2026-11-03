@@ -65,5 +65,5 @@ class Memory(Protocol):
 
     async def compact(self, keep_tokens: int) -> CompactionOutcome:
         """Moves the oldest part of the recent conversation into long-term memory, keeping at
-        least `keep_tokens` of the newest; 0 moves everything."""
+        least `keep_tokens` of the newest; 0 moves everything. Nothing is added while it runs."""
         ...

@@ -21,7 +21,7 @@ from kamerdyner.common.llm import LLM, Incomplete, Reply, Role, Unavailable
 from kamerdyner.common.messages import Message, format_time
 from kamerdyner.common.store import MessageFile, write_atomically
 from kamerdyner.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
-from kamerdyner.memory.compaction import Compact, NoAction, conversation_tokens, split_newest
+from kamerdyner.memory.compaction import conversation_tokens, split_newest
 from kamerdyner.memory.summary import span_heading, summarize, transcript
 
 logger = logging.getLogger(__name__)
@@ -67,29 +67,24 @@ class NotesMemory:
     async def compact(self, keep_tokens: int) -> CompactionOutcome:
         """The conversation is cut only once the notes on the older stretch are stored; when the
         model fails to write them, memory stays as it was."""
-        plan = split_newest(self._conversation.messages, keep_tokens)
-        match plan:
-            case NoAction():
-                return NothingToCompact()
-            case Compact(to_compress=to_compress):
-                absorbed = await self._absorb(to_compress)
-                match absorbed:
-                    case _Absorbed():
-                        remaining = self._messages_after(to_compress)
-                        self._conversation.replace(remaining)
-                        logger.info(
-                            "Moved %d messages of %s into notes, %d remain",
-                            len(to_compress),
-                            self._name,
-                            len(remaining),
-                        )
-                        return Compacted(moved=len(to_compress), kept=len(remaining))
-                    case NotAbsorbed():
-                        return absorbed
-                    case _:
-                        assert_never(absorbed)
+        to_compress, to_keep = split_newest(self._conversation.messages, keep_tokens)
+        if not to_compress:
+            return NothingToCompact()
+        absorbed = await self._absorb(to_compress)
+        match absorbed:
+            case _Absorbed():
+                self._conversation.replace(to_keep)
+                logger.info(
+                    "Moved %d messages of %s into notes, %d remain",
+                    len(to_compress),
+                    self._name,
+                    len(to_keep),
+                )
+                return Compacted(moved=len(to_compress), kept=len(to_keep))
+            case NotAbsorbed():
+                return absorbed
             case _:
-                assert_never(plan)
+                assert_never(absorbed)
 
     async def _absorb(self, messages: Sequence[Message]) -> "_Absorbed | NotAbsorbed":
         conversation = transcript(self._name, messages)
@@ -118,16 +113,6 @@ class NotesMemory:
         logger.warning("Notes of %s not updated: %s", self._name, outcome.reason)
         self._journal(f"could not absorb {len(messages)} messages: {outcome.reason}", sections)
         return outcome
-
-    def _messages_after(self, prefix: Sequence[Message]) -> tuple[Message, ...]:
-        """The messages of the conversation that follow `prefix`, which must still be its start."""
-        messages = self._conversation.messages
-        count = len(prefix)
-        assert messages[:count] == tuple(prefix), (
-            f"Internal error. The conversation of {self._name} no longer starts with the {count} "
-            f"messages it had; it holds {len(messages)}"
-        )
-        return messages[count:]
 
     def _store(self, entry: str) -> None:
         notes = self._notes + entry + "\n\n"
