@@ -1,14 +1,24 @@
 """The model on the Gemini API. All use of the google-genai SDK lives in this module."""
 
 import logging
+import urllib.parse
 from collections.abc import Sequence
+from html.parser import HTMLParser
 
 import aiohttp
 import httpx
 from google import genai
 from google.genai import errors, types
 
-from kamerdyner.common.llm import GenerateResult, Incomplete, Prompt, Reply, Turn, Unavailable
+from kamerdyner.common.llm import (
+    GenerateResult,
+    Incomplete,
+    Prompt,
+    Reply,
+    Turn,
+    Unavailable,
+    WebSearch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +98,8 @@ def _result(response: types.GenerateContentResponse) -> GenerateResult:
     finish_reason = candidate.finish_reason
     if finish_reason is types.FinishReason.STOP and text:
         grounded = _grounded(candidate)
-        return Reply(text=text, grounded=grounded)
+        searches = _searches(candidate)
+        return Reply(text=text, grounded=grounded, searches=searches)
     return Incomplete(reason=f"finish reason {finish_reason}, {len(text)} chars", partial_text=text)
 
 
@@ -129,6 +140,60 @@ def _grounded(candidate: types.Candidate) -> bool:
         return False
     logger.info("Grounded on searches %s, pages %s", queries, pages)
     return True
+
+
+def _searches(candidate: types.Candidate) -> tuple[WebSearch, ...]:
+    """The Google searches behind the answer, each with the link Google's own suggestion widget
+    gives it (the "chips" of `search_entry_point`)."""
+    metadata = candidate.grounding_metadata
+    if metadata is None:
+        return ()
+    queries = [] if metadata.web_search_queries is None else metadata.web_search_queries
+    entry = metadata.search_entry_point
+    rendered = "" if entry is None or entry.rendered_content is None else entry.rendered_content
+    parser = _ChipParser()
+    parser.feed(rendered)
+    parser.close()
+    if queries and not parser.chips:
+        logger.warning("Searches %s came without Google's suggestion links; linking them", queries)
+        linked = [WebSearch(query=query, url=_search_url(query)) for query in queries]
+        return tuple(linked)
+    return tuple(parser.chips)
+
+
+def _search_url(query: str) -> str:
+    encoded = urllib.parse.quote_plus(query)
+    return f"https://www.google.com/search?q={encoded}"
+
+
+class _ChipParser(HTMLParser):
+    """Collects the links of Google's suggestion widget: `<a class="chip" href="...">query</a>`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.chips: list[WebSearch] = []
+        self._href: str | None = None
+        self._text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        href = values.get("href")
+        if tag == "a" and values.get("class") == "chip" and href is not None:
+            self._href = href
+            self._text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._href is not None:
+            self._text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "a" or self._href is None:
+            return
+        words = "".join(self._text).split()
+        query = " ".join(words)
+        chip = WebSearch(query=query, url=self._href)
+        self.chips.append(chip)
+        self._href = None
 
 
 def _log_usage(response: types.GenerateContentResponse) -> None:

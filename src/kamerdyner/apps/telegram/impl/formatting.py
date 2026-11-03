@@ -10,8 +10,11 @@ else is text, escaped: raw HTML in the Markdown is shown as typed, never interpr
 import html
 from collections.abc import Sequence
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
+
+from kamerdyner.common.llm import WebSearch
 
 
 def split_message(text: str, limit: int) -> list[str]:
@@ -39,6 +42,18 @@ def to_telegram_html(markdown: str) -> str:
     renderer = _Renderer()
     renderer.blocks(tokens)
     return renderer.result()
+
+
+def search_keyboard(searches: Sequence[WebSearch]) -> InlineKeyboardMarkup | None:
+    """One button per search behind a reply, opening its Google results — Telegram's stand-in
+    for the suggestion widget Google's terms require with such a reply; none without searches."""
+    if not searches:
+        return None
+    rows: list[list[InlineKeyboardButton]] = []
+    for search in searches:
+        button = InlineKeyboardButton(text=f"🔍 Google: {search.query}", url=search.url)
+        rows.append([button])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 _PARSER = MarkdownIt("commonmark", {"html": False}).enable(["strikethrough", "table"])

@@ -14,10 +14,14 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatAction, ChatType, ParseMode
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import ErrorEvent
+from aiogram.types import ErrorEvent, InlineKeyboardMarkup
 from aiogram.types import Message as TelegramMessage
 
-from kamerdyner.apps.telegram.impl.formatting import split_message, to_telegram_html
+from kamerdyner.apps.telegram.impl.formatting import (
+    search_keyboard,
+    split_message,
+    to_telegram_html,
+)
 from kamerdyner.chat import Chat, ConversationLog, utc_now
 from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, Reply, Unavailable
 from kamerdyner.common.store import MessageFile
@@ -210,9 +214,20 @@ async def _answer_waiting(bot: Bot, telegram_id: int, member: _Member) -> None:
 async def _catch_up(bot: Bot, chat_id: int, member: _Member) -> None:
     async def deliver(result: GenerateResult) -> None:
         text = _reply_text(result)
-        await _send_markdown(bot, chat_id, text)
+        keyboard = _reply_keyboard(result)
+        await _send_markdown(bot, chat_id, text, keyboard)
 
     await member.session.catch_up(deliver, lambda: _typing(bot, chat_id))
+
+
+def _reply_keyboard(result: GenerateResult) -> InlineKeyboardMarkup | None:
+    match result:
+        case Reply(searches=searches):
+            return search_keyboard(searches)
+        case Incomplete() | Unavailable():
+            return None
+        case _:
+            assert_never(result)
 
 
 def _reply_text(result: GenerateResult) -> str:
@@ -251,21 +266,32 @@ async def _send(bot: Bot, chat_id: int, text: str) -> None:
             return
 
 
-async def _send_markdown(bot: Bot, chat_id: int, text: str) -> None:
-    """Sends the model's Markdown `text` formatted, in pieces if long; a piece Telegram cannot
-    parse goes out as plain text instead. A failure to send is logged, not raised."""
+async def _send_markdown(
+    bot: Bot, chat_id: int, text: str, keyboard: InlineKeyboardMarkup | None
+) -> None:
+    """Sends the model's Markdown `text` formatted, in pieces if long, with `keyboard` under the
+    last one; a piece Telegram cannot parse goes out as plain text instead. A failure to send is
+    logged, not raised."""
     pieces = split_message(text, _MESSAGE_LIMIT)
-    for piece in pieces:
+    last = len(pieces) - 1
+    for index, piece in enumerate(pieces):
+        markup = keyboard if index == last else None
         formatted = to_telegram_html(piece)
         try:
-            await bot.send_message(chat_id=chat_id, text=formatted, parse_mode=ParseMode.HTML)
+            await bot.send_message(
+                chat_id=chat_id, text=formatted, parse_mode=ParseMode.HTML, reply_markup=markup
+            )
         except TelegramBadRequest as error:
             if "can't parse entities" not in error.message:
                 logger.warning("Could not send to chat %s: %r", chat_id, error)
                 return
             # Our HTML is at fault, so the error is loud; the user still gets the text.
             logger.error("Telegram rejected the HTML %r: %s", formatted, error.message)
-            await _send(bot, chat_id, piece)
+            try:
+                await bot.send_message(chat_id=chat_id, text=piece, reply_markup=markup)
+            except TelegramAPIError as plain_error:
+                logger.warning("Could not send to chat %s: %r", chat_id, plain_error)
+                return
         except TelegramAPIError as error:
             logger.warning("Could not send to chat %s: %r", chat_id, error)
             return

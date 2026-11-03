@@ -5,7 +5,7 @@ import logging
 import pytest
 from google.genai import types
 
-from kamerdyner.common.llm import Incomplete, Reply
+from kamerdyner.common.llm import Incomplete, Reply, WebSearch
 from kamerdyner.llm.gemini import _result  # pyright: ignore[reportPrivateUsage]
 
 
@@ -112,15 +112,43 @@ def _grounded_response(metadata: types.GroundingMetadata) -> types.GenerateConte
     return types.GenerateContentResponse(candidates=[candidate])
 
 
-def test_an_answer_after_a_search_is_grounded() -> None:
+_CHIP_URL = "https://www.google.com/search?q=latest+python+release&client=app-vertex-grounding"
+
+
+def test_an_answer_after_a_search_is_grounded_with_googles_links_to_its_searches() -> None:
     source = types.GroundingChunkWeb(uri="https://example.com/r", title="python.org")
     chunk = types.GroundingChunk(web=source)
+    widget = (
+        '<style>.chip {}</style><div class="container"><svg class="logo"></svg>'
+        '<div class="carousel"><a class="chip" '
+        f'href="{_CHIP_URL.replace("&", "&amp;")}">latest\n  python release</a></div></div>'
+    )
+    entry = types.SearchEntryPoint(rendered_content=widget)
     metadata = types.GroundingMetadata(
-        web_search_queries=["latest python release"], grounding_chunks=[chunk]
+        web_search_queries=["latest python release"],
+        grounding_chunks=[chunk],
+        search_entry_point=entry,
     )
     response = _grounded_response(metadata)
 
-    assert _result(response) == Reply("Python 3.15.2", grounded=True)
+    search = WebSearch(query="latest python release", url=_CHIP_URL)
+    assert _result(response) == Reply("Python 3.15.2", grounded=True, searches=(search,))
+
+
+def test_searches_without_googles_widget_are_linked_and_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    metadata = types.GroundingMetadata(web_search_queries=["toronto weather"])
+    response = _grounded_response(metadata)
+
+    with caplog.at_level(logging.WARNING):
+        result = _result(response)
+
+    search = WebSearch(
+        query="toronto weather", url="https://www.google.com/search?q=toronto+weather"
+    )
+    assert result == Reply("Python 3.15.2", grounded=True, searches=(search,))
+    assert "without Google's suggestion links" in caplog.text
 
 
 def test_an_answer_from_a_page_it_read_is_grounded() -> None:

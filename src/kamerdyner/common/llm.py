@@ -51,12 +51,22 @@ class Prompt:
 
 
 @dataclass(frozen=True)
+class WebSearch:
+    """A web search the model ran to answer: its query, and the page of its results."""
+
+    query: str
+    url: str
+
+
+@dataclass(frozen=True)
 class Reply:
     """The model answered in full. `grounded`: the answer rests on what the model found on the
-    web, by searching or by reading a page it was given."""
+    web, by searching or by reading a page it was given; `searches`: the searches it ran, which
+    the provider's terms may require showing with the answer."""
 
     text: str
     grounded: bool = False
+    searches: tuple[WebSearch, ...] = ()
 
 
 @dataclass(frozen=True)

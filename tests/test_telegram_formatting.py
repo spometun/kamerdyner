@@ -1,6 +1,7 @@
 import pytest
 
-from kamerdyner.apps.telegram.impl.formatting import to_telegram_html
+from kamerdyner.apps.telegram.impl.formatting import search_keyboard, to_telegram_html
+from kamerdyner.common.llm import WebSearch
 
 
 @pytest.mark.parametrize(
@@ -84,3 +85,21 @@ def test_an_image_shows_its_alternative_text() -> None:
 
 def test_empty_text_stays_empty() -> None:
     assert to_telegram_html("") == ""
+
+
+def test_each_search_gets_a_button_to_its_results() -> None:
+    weather = WebSearch(query="Toronto weather today", url="https://www.google.com/search?q=a")
+    news = WebSearch(query="Toronto news", url="https://www.google.com/search?q=b")
+
+    keyboard = search_keyboard([weather, news])
+
+    assert keyboard is not None
+    buttons = [(row[0].text, row[0].url) for row in keyboard.inline_keyboard]
+    assert buttons == [
+        ("🔍 Google: Toronto weather today", "https://www.google.com/search?q=a"),
+        ("🔍 Google: Toronto news", "https://www.google.com/search?q=b"),
+    ]
+
+
+def test_no_searches_no_keyboard() -> None:
+    assert search_keyboard([]) is None
