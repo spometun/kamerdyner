@@ -6,8 +6,8 @@ from zoneinfo import ZoneInfo
 
 from kamerdyner.common.llm import GenerateResult, Prompt, Role
 from kamerdyner.common.messages import Message
-from kamerdyner.memory import CompactionOutcome, NothingToCompact
-from kamerdyner.memory.compaction import conversation_tokens
+from kamerdyner.memory.impl.compaction import conversation_tokens
+from kamerdyner.memory.memory import CompactionOutcome, NothingToCompact
 from kamerdyner.users import User
 
 TORONTO = ZoneInfo("America/Toronto")

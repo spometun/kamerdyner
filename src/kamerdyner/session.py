@@ -7,7 +7,7 @@ from typing import assert_never
 
 from kamerdyner.chat import Chat
 from kamerdyner.common.llm import GenerateResult, Incomplete, Reply, Unavailable
-from kamerdyner.memory import CompactionOutcome
+from kamerdyner.memory.memory import CompactionOutcome
 
 type Deliver = Callable[[GenerateResult], Awaitable[None]]
 """Shows the user the outcome of a reply."""

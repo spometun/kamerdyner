@@ -20,15 +20,16 @@ them, and keep this section current.
 Code: the library is `src/kamerdyner/`. `common/` is the shared base and depends on nothing
 else of ours: messages (their times carry the user's local zone), the LLM interface, messages on
 disk. `memory/` depends only on `common/`, so it can later become a package of its
-own: the `Memory` interface (recent conversation of whole exchanges, long-term content, `add`,
-`compact(keep_tokens)`), one module per implementation and per way of compressing (now `notes.py`
-over the first compression, `summary.py`) and the choice of the cut (`compaction.py`); an
-implementation is given its directory and loads itself from it. Next to them: users, prompt
+own: `memory.py` holds the `Memory` interface (recent conversation of whole exchanges, long-term
+content, `add`, `compact(keep_tokens)`), one public module per implementation (now `notes.py`, over
+the first compression), and in `impl/` the ways of compressing (now `summary.py`) and the choice of
+the cut (`compaction.py`); an implementation is given its directory and loads itself from it. Next to them: users, prompt
 assembly, LLM providers in `llm/` (now `llm/gemini.py`), `Chat` tying them together, `Session`
 running one chat's replies and compactions one at a time for a client whose messages arrive at
-any moment. Programs are thin assemblies in `src/kamerdyner/apps/` (now: `console` and
-`telegram`, whose users are the user directories with a `telegram_id`). A user is a directory holding everything of
-theirs: `user.toml` (name, timezone), `pending.json` (their messages still waiting for a reply,
+any moment. Programs are thin assemblies in `src/kamerdyner/apps/` (now: `console`, and the
+`telegram/` package — `telegram.py` the program, `impl/` the bot and the formatting of replies;
+its users are the user directories with a `telegram_id`). A user is a directory holding everything
+of theirs: `user.toml` (name, timezone), `pending.json` (their messages still waiting for a reply,
 kept by `Chat`), `memory/` with `latest.json` (the recent conversation, what the model sees),
 `notes.md` (long-term memory, what goes into the system instruction) and `memory.log` (what
 memory did, for a person to read), and `log/` with `log.jsonl` (the append-only archive, never
@@ -193,6 +194,10 @@ not be papered over. Keep the two strictly apart.
   depends on time (the silence before a memory pass, the dates on recent notes).
 - **Public declarations at the top of the module, private ones below.** Module-private names
   start with `_`. A reader sees what a module offers before how it works.
+- **A package shows its public modules at its top and keeps the rest in `impl/`.** What other
+  parts of the program import lives in the package's own modules (`memory/memory.py`,
+  `apps/telegram/telegram.py`); what only the package itself uses goes into its `impl/`, which
+  nothing outside the package (tests aside) imports.
 - **The better design wins over a clean linter.** Don't weaken a design to silence a false
   positive; suppress it narrowly (`# type: ignore[code]`, `# noqa: CODE`, always with the
   specific code) and note why in a comment.

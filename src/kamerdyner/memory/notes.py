@@ -20,9 +20,9 @@ from typing import assert_never
 from kamerdyner.common.llm import LLM, Incomplete, Reply, Role, Unavailable
 from kamerdyner.common.messages import Message, format_time
 from kamerdyner.common.store import MessageFile, write_atomically
-from kamerdyner.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
-from kamerdyner.memory.compaction import conversation_tokens, split_newest
-from kamerdyner.memory.summary import span_heading, summarize, transcript
+from kamerdyner.memory.impl.compaction import conversation_tokens, split_newest
+from kamerdyner.memory.impl.summary import span_heading, summarize, transcript
+from kamerdyner.memory.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
 
 logger = logging.getLogger(__name__)
 

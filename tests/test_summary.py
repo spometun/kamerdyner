@@ -2,7 +2,7 @@ import pytest
 from fakes import ScriptedLLM, make_message
 
 from kamerdyner.common.llm import Reply, Role, Turn
-from kamerdyner.memory.summary import span_heading, summarize, transcript
+from kamerdyner.memory.impl.summary import span_heading, summarize, transcript
 
 
 def test_transcript_names_both_sides_with_local_times() -> None:

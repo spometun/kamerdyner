@@ -13,6 +13,7 @@ dependencies = [
     "google-genai",
     "aiohttp",
     "httpx",
+    "markdown-it-py",
     "python-dotenv",
 ]
 
@@ -46,6 +47,6 @@ extend-exclude = ["tools/arch"]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 # The bot speaks Ukrainian: Cyrillic letters that look Latin are meant, not typos (RUF001-003).
 allowed-confusables = [
-    "а", "в", "е", "з", "і", "к", "н", "о", "п", "р", "с", "т", "у", "х", "ь",
+    "а", "в", "г", "е", "з", "і", "к", "н", "о", "п", "р", "с", "т", "у", "х", "ь",
     "А", "В", "Е", "З", "І", "К", "М", "Н", "О", "Р", "С", "Т", "У", "Х", "Ь",
 ]

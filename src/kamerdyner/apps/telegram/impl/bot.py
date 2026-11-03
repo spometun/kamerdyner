@@ -1,22 +1,8 @@
-"""Telegram bot: each user talks to the assistant in their own private chat with the bot.
+"""The bot itself: one member per user, an update dispatcher, replies sent to Telegram."""
 
-    python -m kamerdyner.apps.telegram <data directory>
-
-Every user directory in the data directory whose `user.toml` has `telegram_id = <id>` is a user
-of the bot; anyone else who writes is told their Telegram id, to be added that way, and nothing
-of theirs is kept. A user's conversation and memory are the same files the console uses.
-TELEGRAM_BOT_TOKEN, GEMINI_API_KEY and GEMINI_MODEL come from the environment or `.env`. The log
-of this program is `telegram.log` in the data directory. Ctrl+C stops the bot.
-
-Replies go out as plain text. Messages that arrive while the assistant is replying get one reply
-together, next. On start, messages left without a reply by an earlier run are answered.
-"""
-
-import argparse
 import asyncio
 import contextlib
 import logging
-import os
 import sys
 import tomllib
 from collections.abc import AsyncGenerator
@@ -25,56 +11,22 @@ from pathlib import Path
 from typing import assert_never
 
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.enums import ChatAction, ChatType
-from aiogram.exceptions import TelegramAPIError
+from aiogram.enums import ChatAction, ChatType, ParseMode
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import ErrorEvent
 from aiogram.types import Message as TelegramMessage
-from dotenv import load_dotenv
-from google.genai import types
 
+from kamerdyner.apps.telegram.impl.formatting import split_message, to_telegram_html
 from kamerdyner.chat import Chat, ConversationLog, utc_now
 from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, Reply, Unavailable
 from kamerdyner.common.store import MessageFile
-from kamerdyner.llm.gemini import GeminiLLM, make_client
-from kamerdyner.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
+from kamerdyner.memory.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory
 from kamerdyner.session import Session
 from kamerdyner.users import User, load_user
 
 logger = logging.getLogger(__name__)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Kamerdyner as a Telegram bot.")
-    parser.add_argument("data", type=Path, help="the directory of user directories")
-    args = parser.parse_args()
-    data: Path = args.data
-
-    load_dotenv()
-    token = _required_env(parser, "TELEGRAM_BOT_TOKEN")
-    api_key = _required_env(parser, "GEMINI_API_KEY")
-    model = _required_env(parser, "GEMINI_MODEL")
-    try:
-        directories = load_telegram_users(data)
-    except ValueError as error:
-        parser.error(str(error))
-    logging.basicConfig(
-        filename=data / "telegram.log",
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-
-    client = make_client(api_key, timeout_seconds=120, attempts=3)
-    # A fixed seed makes replies repeatable: a change in them comes from our prompt or code.
-    llm = GeminiLLM(client, model, types.ThinkingLevel.LOW, seed=0)
-    memory_llm = GeminiLLM(client, model, types.ThinkingLevel.HIGH, seed=0)
-    members: dict[int, _Member] = {}
-    for telegram_id, directory in directories.items():
-        member = _member(directory, llm, memory_llm)
-        members[telegram_id] = member
-
-    asyncio.run(_serve(token, members))
 
 
 def load_telegram_users(data: Path) -> dict[int, Path]:
@@ -98,25 +50,6 @@ def load_telegram_users(data: Path) -> dict[int, Path]:
             )
         users[telegram_id] = path.parent
     return users
-
-
-def split_message(text: str, limit: int) -> list[str]:
-    """`text` in pieces of at most `limit` characters, each cut at the last line break before
-    the limit, else at the last space, else right at the limit."""
-    if limit <= 0:
-        raise ValueError(f"Invalid input. limit must be positive, got {limit}")
-    pieces: list[str] = []
-    rest = text
-    while len(rest) > limit:
-        cut = rest.rfind("\n", 0, limit + 1)
-        if cut <= 0:
-            cut = rest.rfind(" ", 0, limit + 1)
-        if cut <= 0:
-            cut = limit
-        pieces.append(rest[:cut])
-        rest = rest[cut:].lstrip()
-    pieces.append(rest)
-    return pieces
 
 
 # Temporarily 4K instead of 16K, to see compaction happen in testing.
@@ -157,7 +90,13 @@ def _member(directory: Path, llm: LLM, memory_llm: LLM) -> _Member:
     return _Member(user=user, session=session)
 
 
-async def _serve(token: str, members: dict[int, _Member]) -> None:
+async def serve(token: str, directories: dict[int, Path], llm: LLM, memory_llm: LLM) -> None:
+    """Runs the bot for the users in `directories`, by Telegram id, until cancelled. `llm`
+    answers, `memory_llm` compacts memory."""
+    members: dict[int, _Member] = {}
+    for telegram_id, directory in directories.items():
+        member = _member(directory, llm, memory_llm)
+        members[telegram_id] = member
     bot = Bot(token=token)
     try:
         me = await bot.get_me()
@@ -271,7 +210,7 @@ async def _answer_waiting(bot: Bot, telegram_id: int, member: _Member) -> None:
 async def _catch_up(bot: Bot, chat_id: int, member: _Member) -> None:
     async def deliver(result: GenerateResult) -> None:
         text = _reply_text(result)
-        await _send(bot, chat_id, text)
+        await _send_markdown(bot, chat_id, text)
 
     await member.session.catch_up(deliver, lambda: _typing(bot, chat_id))
 
@@ -312,6 +251,26 @@ async def _send(bot: Bot, chat_id: int, text: str) -> None:
             return
 
 
+async def _send_markdown(bot: Bot, chat_id: int, text: str) -> None:
+    """Sends the model's Markdown `text` formatted, in pieces if long; a piece Telegram cannot
+    parse goes out as plain text instead. A failure to send is logged, not raised."""
+    pieces = split_message(text, _MESSAGE_LIMIT)
+    for piece in pieces:
+        formatted = to_telegram_html(piece)
+        try:
+            await bot.send_message(chat_id=chat_id, text=formatted, parse_mode=ParseMode.HTML)
+        except TelegramBadRequest as error:
+            if "can't parse entities" not in error.message:
+                logger.warning("Could not send to chat %s: %r", chat_id, error)
+                return
+            # Our HTML is at fault, so the error is loud; the user still gets the text.
+            logger.error("Telegram rejected the HTML %r: %s", formatted, error.message)
+            await _send(bot, chat_id, piece)
+        except TelegramAPIError as error:
+            logger.warning("Could not send to chat %s: %r", chat_id, error)
+            return
+
+
 @contextlib.asynccontextmanager
 async def _typing(bot: Bot, chat_id: int) -> AsyncGenerator[None]:
     """Shows that the bot is typing for as long as the scope lasts."""
@@ -334,14 +293,3 @@ async def _send_typing(bot: Bot, chat_id: int) -> None:
         await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
     except TelegramAPIError as error:
         logger.warning("Could not show typing in chat %s: %r", chat_id, error)
-
-
-def _required_env(parser: argparse.ArgumentParser, name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        parser.error(f"{name} is not set; put it in .env (see .env.example)")
-    return value
-
-
-if __name__ == "__main__":
-    main()

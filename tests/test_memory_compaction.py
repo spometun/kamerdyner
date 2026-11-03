@@ -3,7 +3,7 @@ from fakes import make_message
 
 from kamerdyner.common.llm import Role
 from kamerdyner.common.messages import Message
-from kamerdyner.memory.compaction import conversation_tokens, split_newest
+from kamerdyner.memory.impl.compaction import conversation_tokens, split_newest
 
 # Four ASCII characters weigh a token.
 _TOKEN = "xxxx"

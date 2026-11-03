@@ -1,1 +1,1 @@
-"""Programs assembled from the kamerdyner library: one module per client."""
+"""Programs assembled from the kamerdyner library: one module or package per client."""

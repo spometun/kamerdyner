@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from kamerdyner.apps.telegram import load_telegram_users, split_message
+from kamerdyner.apps.telegram.impl.bot import load_telegram_users
+from kamerdyner.apps.telegram.impl.formatting import split_message
 
 
 def _user_file(data: Path, name: str, extra: str) -> None:

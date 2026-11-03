@@ -5,7 +5,7 @@ from fakes import ScriptedLLM, make_message
 
 from kamerdyner.common.llm import GenerateResult, Incomplete, Reply, Role, Unavailable
 from kamerdyner.common.messages import Message
-from kamerdyner.memory import Compacted, NotAbsorbed, NothingToCompact
+from kamerdyner.memory.memory import Compacted, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory
 
 _HEADING = "## [2026-10-04 Sun 14:32] — [2026-10-04 Sun 14:33]"

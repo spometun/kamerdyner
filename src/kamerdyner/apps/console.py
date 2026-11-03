@@ -29,7 +29,7 @@ from kamerdyner.chat import Chat, ConversationLog, utc_now
 from kamerdyner.common.llm import GenerateResult, Incomplete, Reply, Unavailable
 from kamerdyner.common.store import MessageFile
 from kamerdyner.llm.gemini import GeminiLLM, make_client
-from kamerdyner.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
+from kamerdyner.memory.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory
 from kamerdyner.users import load_user
 

@@ -12,7 +12,7 @@ from typing import assert_never
 from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, Reply, Role, Unavailable
 from kamerdyner.common.messages import Message
 from kamerdyner.common.store import MessageFile
-from kamerdyner.memory import CompactionOutcome, Memory
+from kamerdyner.memory.memory import CompactionOutcome, Memory
 from kamerdyner.prompt import build_prompt
 from kamerdyner.users import User
 

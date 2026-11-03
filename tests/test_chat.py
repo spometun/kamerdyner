@@ -9,7 +9,7 @@ from kamerdyner.chat import Chat, ConversationLog
 from kamerdyner.common.llm import GenerateResult, Incomplete, Prompt, Reply, Role, Turn, Unavailable
 from kamerdyner.common.messages import Message
 from kamerdyner.common.store import MessageFile
-from kamerdyner.memory import NotAbsorbed
+from kamerdyner.memory.memory import NotAbsorbed
 
 
 class _Setup:
