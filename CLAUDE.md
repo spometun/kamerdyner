@@ -38,6 +38,17 @@ Environment: conda env `kamerdyner` from `environment.yml`; every dependency is 
 `pyproject.toml`. Run the checks inside it: `pytest`, `pyright` (strict), `ruff format`,
 `ruff check`. Without the env activated, pyright resolves imports against the wrong Python.
 
+`tools/arch/` (see its `README.md`) draws the code: `tools/arch/run_arch.py` reads `src/` with
+`ast` (stdlib, no env, ~0.1s) and writes `build/arch/architecture-kamerdyner.html` — a foldable
+package → module → class tree with constructs / calls / imports / inherits edges, and a diff
+against the last snapshot. `tools/arch/arch_query.py <name-or-node-id>` prints who uses a thing
+and what it uses, off the `const MODEL = {...}` in that page: consult it while planning where
+something should live, not only before deleting. The page is only as fresh as the last run —
+rerun it after changing code. Don't pass `--save-snapshot` unasked: it moves the baseline the
+user's diff colouring is measured against. A prompt tagged `[architecture-kamerdyner.html
+node:<id>]` came from the page's "copy for prompt": look the id up in `MODEL.nodes`. It reads
+names, not behaviour, so confirm what matters in the code.
+
 `docs/gemini_chat_2026-10-02.md` is the original brainstorming chat with Gemini (~450 KB — grep
 it, don't read it whole). It is raw input, not a spec: several of its choices are deliberately
 rejected in `docs/idea.md`. It holds personal data, so it lives only locally and is kept out of
