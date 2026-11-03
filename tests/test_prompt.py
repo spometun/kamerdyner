@@ -5,7 +5,7 @@ from kamerdyner.common.llm import Prompt, Role, Turn
 from kamerdyner.prompt import build_prompt
 
 
-def test_user_messages_carry_local_time_with_weekday() -> None:
+def test_user_messages_carry_local_time_with_weekday_and_offset() -> None:
     user = make_user()
     question = make_message(Role.USER, "Котра година?")
     answer = make_message(Role.MODEL, "Пів на третю.", minutes=1)
@@ -14,9 +14,9 @@ def test_user_messages_carry_local_time_with_weekday() -> None:
     prompt = build_prompt(user, "", [question, answer, follow_up])
 
     assert prompt.turns == (
-        Turn(Role.USER, "[2026-10-04 Sun 14:32] Котра година?"),
+        Turn(Role.USER, "[2026-10-04 Sun 14:32 UTC-04:00] Котра година?"),
         Turn(Role.MODEL, "Пів на третю."),
-        Turn(Role.USER, "[2026-10-04 Sun 16:02] Дякую"),
+        Turn(Role.USER, "[2026-10-04 Sun 16:02 UTC-04:00] Дякую"),
     )
 
 
@@ -28,7 +28,10 @@ def test_consecutive_user_messages_merge_into_one_turn() -> None:
     prompt = build_prompt(user, "", [first, second])
 
     assert prompt.turns == (
-        Turn(Role.USER, "[2026-10-04 Sun 14:32] Перше\n\n[2026-10-04 Sun 14:35] Друге"),
+        Turn(
+            Role.USER,
+            "[2026-10-04 Sun 14:32 UTC-04:00] Перше\n\n[2026-10-04 Sun 14:35 UTC-04:00] Друге",
+        ),
     )
 
 

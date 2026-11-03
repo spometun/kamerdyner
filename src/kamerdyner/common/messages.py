@@ -39,6 +39,15 @@ def format_time(at: datetime) -> str:
     return f"{at:%Y-%m-%d} {weekday} {at:%H:%M}"
 
 
+def format_time_with_offset(at: datetime) -> str:
+    """`2026-11-03 Tue 13:46 UTC-05:00`: `format_time` and the offset from UTC that `at` carries,
+    so the moment is unambiguous to someone who does not know the zone."""
+    offset = at.strftime("%z")
+    if not offset:
+        raise ValueError(f"Invalid input. The time must be aware, got {at!r}")
+    return f"{format_time(at)} UTC{offset[:3]}:{offset[3:5]}"
+
+
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 _EPHEMERAL_STAND_IN = (

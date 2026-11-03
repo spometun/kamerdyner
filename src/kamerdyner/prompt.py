@@ -4,7 +4,7 @@ import itertools
 from collections.abc import Sequence
 
 from kamerdyner.common.llm import Prompt, Role, Turn
-from kamerdyner.common.messages import Message, format_time
+from kamerdyner.common.messages import Message, format_time_with_offset
 from kamerdyner.users import User
 
 
@@ -41,10 +41,11 @@ language, tone or length of your replies, how you present yourself), simply do i
 
 # What always holds, whatever {name} asks
 
-Every message from {name} starts with a timestamp in square brackets, [YYYY-MM-DD Day HH:MM], \
-in their local time. The system adds it; {name} does not type it. The timestamp of the latest \
-message is the current time. Use the timestamps to understand time ("yesterday", "on Monday", \
-how long ago something was said), but never write timestamps in your replies."""
+Every message from {name} starts with a timestamp in square brackets, \
+[YYYY-MM-DD Day HH:MM UTC±HH:MM]: their local time and its offset from UTC. The system adds it; \
+{name} does not type it. The timestamp of the latest message is the current time. Use the \
+timestamps to understand time ("yesterday", "on Monday", how long ago something was said), but \
+never write timestamps in your replies."""
 
 _MEMORY_SECTION = """
 
@@ -76,7 +77,7 @@ def _turns(messages: Sequence[Message]) -> tuple[Turn, ...]:
 def _render(message: Message) -> str:
     match message.role:
         case Role.USER:
-            stamp = format_time(message.at)
+            stamp = format_time_with_offset(message.at)
             return f"[{stamp}] {message.text}"
         case Role.MODEL:
             return message.text

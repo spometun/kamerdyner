@@ -54,7 +54,7 @@ async def test_reply_goes_to_memory_with_the_message(tmp_path: Path) -> None:
     assert not setup.chat.awaiting_reply
     assert setup.logged_texts() == ["Привіт", "Привіт, Марто!"]
     prompt = setup.llm.prompts[0]
-    assert prompt.turns[-1].text == "[2026-10-04 Sun 14:32] Привіт"
+    assert prompt.turns[-1].text == "[2026-10-04 Sun 14:32 UTC-04:00] Привіт"
     assert "Любить каву без цукру." in prompt.system_instruction
 
 
@@ -111,9 +111,9 @@ async def test_model_sees_memorys_conversation_then_the_waiting_messages(tmp_pat
     await setup.chat.send("А в тебе?")
 
     assert setup.llm.prompts[0].turns == (
-        Turn(Role.USER, "[2026-10-04 Sun 13:32] Як справи?"),
+        Turn(Role.USER, "[2026-10-04 Sun 13:32 UTC-04:00] Як справи?"),
         Turn(Role.MODEL, "Добре."),
-        Turn(Role.USER, "[2026-10-04 Sun 14:32] А в тебе?"),
+        Turn(Role.USER, "[2026-10-04 Sun 14:32 UTC-04:00] А в тебе?"),
     )
 
 
