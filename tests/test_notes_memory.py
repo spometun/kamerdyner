@@ -9,7 +9,7 @@ from kamerdyner.common.messages import Message
 from kamerdyner.memory.memory import Compacted, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory
 
-_HEADING = "## [2026-10-04 Sun 14:32] — [2026-10-04 Sun 14:33]"
+_HEADING = "## [2026-10-04 Sun 14:32 UTC-04:00] — [2026-10-04 Sun 14:33 UTC-04:00]"
 
 
 def _exchange(minutes: int = 0, size: int = 0) -> list[Message]:
@@ -81,7 +81,7 @@ async def test_compacted_notes_are_the_content_and_survive_a_restart(tmp_path: P
     assert reopened.conversation == ()
     journal = _journal(tmp_path)
     assert "absorbed 2 messages" in journal
-    assert "[2026-10-04 Sun 14:32] Марта: Завтра до лікаря" in journal
+    assert "[2026-10-04 Sun 14:32 UTC-04:00] Марта: Завтра до лікаря" in journal
     assert notes in journal
     assert "warning" not in journal
 
@@ -105,7 +105,7 @@ async def test_compact_keeps_the_newest_tokens(tmp_path: Path) -> None:
 
 
 async def test_each_compaction_adds_an_entry_after_the_previous_ones(tmp_path: Path) -> None:
-    second_heading = "## [2026-10-04 Sun 15:32] — [2026-10-04 Sun 15:33]"
+    second_heading = "## [2026-10-04 Sun 15:32 UTC-04:00] — [2026-10-04 Sun 15:33 UTC-04:00]"
     first = f"{_HEADING}\n- перше"
     second = f"{second_heading}\n- друге"
     memory, _ = _memory(tmp_path, [Reply(first), Reply(second)])

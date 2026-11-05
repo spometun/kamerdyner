@@ -1,7 +1,10 @@
+from zoneinfo import ZoneInfo
+
 import pytest
 from fakes import ScriptedLLM, make_message
 
 from kamerdyner.common.llm import Reply, Role, Turn
+from kamerdyner.common.messages import Message
 from kamerdyner.memory.impl.summary import span_heading, summarize, transcript
 
 
@@ -14,8 +17,8 @@ def test_transcript_names_both_sides_with_local_times() -> None:
     text = transcript("Марта", messages)
 
     assert text == (
-        "[2026-10-04 Sun 14:32] Марта: Завтра до лікаря\n\n"
-        "[2026-10-04 Sun 14:33] Kamerdyner: Нагадати зранку?"
+        "[2026-10-04 Sun 14:32 UTC-04:00] Марта: Завтра до лікаря\n\n"
+        "[2026-10-04 Sun 14:33 UTC-04:00] Kamerdyner: Нагадати зранку?"
     )
 
 
@@ -29,7 +32,20 @@ def test_span_heading_holds_the_first_and_the_last_time() -> None:
 
     heading = span_heading(messages)
 
-    assert heading == "## [2026-10-04 Sun 14:32] — [2026-10-06 Tue 14:37]"
+    assert heading == "## [2026-10-04 Sun 14:32 UTC-04:00] — [2026-10-06 Tue 14:37 UTC-04:00]"
+
+
+def test_a_stretch_across_a_move_shows_each_time_on_its_own_clock() -> None:
+    kyiv = ZoneInfo("Europe/Kyiv")
+    before = make_message(Role.USER, "Я тепер у Києві", minutes=0)
+    at = before.at.astimezone(kyiv)
+    after = Message(role=Role.MODEL, text="Записала", at=at)
+    messages = [before, after]
+
+    heading = span_heading(messages)
+
+    assert heading == "## [2026-10-04 Sun 14:32 UTC-04:00] — [2026-10-04 Sun 21:32 UTC+03:00]"
+    assert "[2026-10-04 Sun 21:32 UTC+03:00] Kamerdyner: Записала" in transcript("Марта", messages)
 
 
 async def test_summarize_sends_the_transcript_and_returns_the_reply() -> None:

@@ -9,7 +9,7 @@ model itself. Their length follows the substance of the conversation; nothing ca
 from collections.abc import Sequence
 
 from kamerdyner.common.llm import LLM, GenerateResult, Prompt, Role, Turn
-from kamerdyner.common.messages import Message, format_time
+from kamerdyner.common.messages import Message, format_time_with_offset
 
 
 async def summarize(llm: LLM, name: str, messages: Sequence[Message]) -> GenerateResult:
@@ -29,10 +29,11 @@ async def summarize(llm: LLM, name: str, messages: Sequence[Message]) -> Generat
 
 def transcript(name: str, messages: Sequence[Message]) -> str:
     """The messages as the summarizing model reads them: one per paragraph, each opening with
-    its local time and its author, `[2026-10-04 Sun 14:32] Марта: ...`."""
+    its local time with the offset from UTC and its author,
+    `[2026-10-04 Sun 14:32 UTC-04:00] Марта: ...`."""
     lines: list[str] = []
     for message in messages:
-        stamp = format_time(message.at)
+        stamp = format_time_with_offset(message.at)
         author = _author(message.role, name)
         lines.append(f"[{stamp}] {author}: {message.text}")
     return "\n\n".join(lines)
@@ -42,8 +43,8 @@ _ASSISTANT = "Kamerdyner"
 
 _INSTRUCTION = """\
 You are Kamerdyner, the personal assistant of {name}. The user message holds a stretch of \
-your conversation with {name}. Each message opens with its local time, \
-[YYYY-MM-DD Day HH:MM], and its author: {name}, or Kamerdyner — that is you.
+your conversation with {name}. Each message opens with its local time and offset from UTC, \
+[YYYY-MM-DD Day HH:MM UTC±HH:MM], and its author: {name}, or Kamerdyner — that is you.
 
 This stretch is leaving your view. The notes you write now are all you will keep of it: \
 later you will read them before talking to {name} again, without the conversation itself. \
@@ -56,7 +57,7 @@ word.
 
 Open the notes with a heading line holding the time of the first and of the last message of \
 the stretch, copied exactly as they stand in the conversation:
-## [2026-10-04 Sun 14:32] — [2026-10-06 Tue 09:15]
+## [2026-10-04 Sun 14:32 UTC-04:00] — [2026-10-06 Tue 09:15 UTC-04:00]
 
 Rules:
 - Turn relative times into dates: "tomorrow" said on 2026-10-04 is 2026-10-05. Keep the time \
@@ -77,9 +78,10 @@ what for, not its content.
 
 def span_heading(messages: Sequence[Message]) -> str:
     """The heading the notes on `messages` must open with: the local times of the first and of
-    the last message, `## [2026-10-04 Sun 14:32] — [2026-10-06 Tue 09:15]`."""
-    first = format_time(messages[0].at)
-    last = format_time(messages[-1].at)
+    the last message with their offsets from UTC, each moment unambiguous even if the user's zone
+    changes later, `## [2026-10-04 Sun 14:32 UTC-04:00] — [2026-10-06 Tue 09:15 UTC-04:00]`."""
+    first = format_time_with_offset(messages[0].at)
+    last = format_time_with_offset(messages[-1].at)
     return f"## [{first}] — [{last}]"
 
 
