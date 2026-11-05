@@ -10,10 +10,13 @@ it their messages waiting for a reply (`pending.json`) and the archive of their 
     timezone = "America/Toronto"
 """
 
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from kamerdyner.common.store import write_atomically
 
 
 @dataclass(frozen=True)
@@ -42,8 +45,29 @@ def load_user(directory: Path) -> User:
             raise ValueError(
                 f"User file {path} needs string 'name' and 'timezone', got {settings!r}"
             )
-    try:
-        zone = ZoneInfo(timezone)
-    except ZoneInfoNotFoundError as error:
-        raise ValueError(f"User file {path} has unknown timezone {timezone!r}") from error
+    zone = find_timezone(timezone)
+    if zone is None:
+        raise ValueError(f"User file {path} has unknown timezone {timezone!r}")
     return User(id=directory.name, name=name, timezone=zone)
+
+
+def find_timezone(name: str) -> ZoneInfo | None:
+    """The time zone with this IANA name, which may come from outside; None if there is none."""
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def save_timezone(directory: Path, timezone: ZoneInfo) -> None:
+    """Rewrites the time zone in the user's `user.toml`, leaving the rest of the file as it is;
+    raises ValueError naming the file when it has no such setting on a line of its own."""
+    path = directory / "user.toml"
+    settings = path.read_text(encoding="utf-8")
+    updated, count = _TIMEZONE_SETTING.subn(rf'\g<1>"{timezone.key}"', settings)
+    if count != 1:
+        raise ValueError(f"User file {path} has {count} timezone settings instead of one")
+    write_atomically(path, updated)
+
+
+_TIMEZONE_SETTING = re.compile(r"""^(timezone\s*=\s*)("[^"\n]*"|'[^'\n]*')""", re.MULTILINE)

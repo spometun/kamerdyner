@@ -6,7 +6,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import assert_never
 
 from kamerdyner.chat import Chat
-from kamerdyner.common.llm import GenerateResult, Incomplete, Reply, Unavailable
+from kamerdyner.common.llm import GenerateResult, LLMError, Reply
 from kamerdyner.memory.memory import CompactionOutcome
 
 type Deliver = Callable[[GenerateResult], Awaitable[None]]
@@ -56,7 +56,7 @@ class Session:
                     case Reply():
                         if self._chat.conversation_tokens >= self._limit_tokens:
                             await self._chat.compact(self._keep_tokens)
-                    case Incomplete() | Unavailable():
+                    case LLMError():
                         return
                     case _:
                         assert_never(result)

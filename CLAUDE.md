@@ -24,9 +24,10 @@ own: `memory.py` holds the `Memory` interface (recent conversation of whole exch
 content, `add`, `compact(keep_tokens)`), one public module per implementation (now `notes.py`, over
 the first compression), and in `impl/` the ways of compressing (now `summary.py`) and the choice of
 the cut (`compaction.py`); an implementation is given its directory and loads itself from it. Next to them: users, prompt
-assembly, LLM providers in `llm/` (now `llm/gemini.py`), `Chat` tying them together, `Session`
-running one chat's replies and compactions one at a time for a client whose messages arrive at
-any moment. Programs are thin assemblies in `src/kamerdyner/apps/` (now: `console`, and the
+assembly, LLM providers in `llm/` (now `llm/gemini.py`), `Chat` tying them together and running
+the model's tools (one round per reply: `generate(prompt, tools)`, run what it asked for, then
+`generate` with the results and no tools; now `set_timezone`), `Session` running one chat's
+replies and compactions one at a time for a client whose messages arrive at any moment. Programs are thin assemblies in `src/kamerdyner/apps/` (now: `console`, and the
 `telegram/` package — `telegram.py` the program, `impl/` the bot and the formatting of replies;
 its users are the user directories with a `telegram_id`). A user is a directory holding everything
 of theirs: `user.toml` (name, timezone), `pending.json` (their messages still waiting for a reply,

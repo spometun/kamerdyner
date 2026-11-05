@@ -23,7 +23,7 @@ from kamerdyner.apps.telegram.impl.formatting import (
     to_telegram_html,
 )
 from kamerdyner.chat import Chat, ConversationLog, utc_now
-from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, Reply, Unavailable
+from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, LLMError, Reply, Unavailable
 from kamerdyner.common.store import MessageFile
 from kamerdyner.memory.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory
@@ -89,7 +89,7 @@ def _member(directory: Path, llm: LLM, memory_llm: LLM) -> _Member:
     pending = MessageFile(directory / "pending.json")
     memory_directory = directory / "memory"
     memory = NotesMemory(memory_directory, user.name, memory_llm)
-    chat = Chat(user, log, pending, memory, llm, utc_now)
+    chat = Chat(user, directory, log, pending, memory, llm, utc_now)
     session = Session(chat, _LIMIT_TOKENS, _KEEP_TOKENS)
     return _Member(user=user, session=session)
 
@@ -224,7 +224,7 @@ def _reply_keyboard(result: GenerateResult) -> InlineKeyboardMarkup | None:
     match result:
         case Reply(searches=searches):
             return search_keyboard(searches)
-        case Incomplete() | Unavailable():
+        case LLMError():
             return None
         case _:
             assert_never(result)

@@ -5,8 +5,23 @@ import logging
 import pytest
 from google.genai import types
 
-from kamerdyner.common.llm import Incomplete, Reply, WebSearch
-from kamerdyner.llm.gemini import _result  # pyright: ignore[reportPrivateUsage]
+from kamerdyner.common.llm import (
+    Incomplete,
+    Prompt,
+    Reply,
+    Role,
+    ToolCall,
+    ToolResult,
+    ToolRound,
+    Turn,
+    Unavailable,
+    WebSearch,
+)
+from kamerdyner.llm.gemini import (
+    _contents,  # pyright: ignore[reportPrivateUsage]
+    _result,  # pyright: ignore[reportPrivateUsage]
+    _without_tool_calls,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 def _signed(text: str) -> types.Part:
@@ -165,3 +180,111 @@ def test_empty_grounding_metadata_is_not_grounded() -> None:
     response = _grounded_response(metadata)
 
     assert _result(response) == Reply("Python 3.15.2", grounded=False)
+
+
+def _call_part(name: str, zone: str, signature: bytes | None) -> types.Part:
+    call = types.FunctionCall(id=f"id-{zone}", name=name, args={"zone": zone})
+    return types.Part(function_call=call, thought_signature=signature)
+
+
+def test_a_function_call_is_a_reply_with_tool_calls_and_the_whole_turn() -> None:
+    part = _call_part("set_timezone", "Europe/Kyiv", b"signature")
+    response = _response([part], types.FinishReason.STOP)
+
+    result = _result(response)
+
+    call = ToolCall("set_timezone", {"zone": "Europe/Kyiv"})
+    assert isinstance(result, Reply)
+    assert result.text == ""
+    assert result.tool_calls == (call,)
+    assert result.provider_turn == types.Content(role="model", parts=[part])
+
+
+def test_a_reply_without_calls_keeps_no_provider_turn() -> None:
+    response = _response([_signed("Привіт")], types.FinishReason.STOP)
+
+    assert _result(response) == Reply("Привіт", provider_turn=None)
+
+
+def test_only_the_first_of_parallel_calls_needs_a_signature(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    first = _call_part("set_timezone", "Europe/Kyiv", b"signature")
+    second = _call_part("set_timezone", "Europe/Warsaw", None)
+    response = _response([first, second], types.FinishReason.STOP)
+
+    with caplog.at_level(logging.WARNING):
+        result = _result(response)
+
+    assert isinstance(result, Reply)
+    assert len(result.tool_calls) == 2
+    assert caplog.text == ""
+
+
+def test_a_call_cut_off_is_incomplete() -> None:
+    part = _call_part("set_timezone", "Europe/Kyiv", b"signature")
+    response = _response([part], types.FinishReason.MAX_TOKENS)
+
+    assert isinstance(_result(response), Incomplete)
+
+
+def test_a_turn_that_searched_is_grounded_without_metadata() -> None:
+    call = _call_part("set_timezone", "Europe/Kyiv", b"signature")
+    search = types.Part(tool_call=types.ToolCall(id="s1"), thought_signature=b"signature")
+    response = _response([call, search], types.FinishReason.STOP)
+
+    result = _result(response)
+
+    assert isinstance(result, Reply)
+    assert result.grounded
+
+
+def test_a_tool_call_where_none_is_allowed_is_an_error_and_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    call = ToolCall("set_timezone", {"zone": "Europe/Kyiv"})
+    reply = Reply("Зараз", tool_calls=(call,), provider_turn="turn")
+
+    with caplog.at_level(logging.WARNING):
+        result = _without_tool_calls(reply)
+
+    assert isinstance(result, Incomplete)
+    assert result.partial_text == "Зараз"
+    assert "set_timezone" in result.reason
+    assert "set_timezone" in caplog.text
+
+
+def test_results_without_tool_calls_pass_where_none_is_allowed() -> None:
+    reply = Reply("Привіт")
+    unavailable = Unavailable("503")
+
+    assert _without_tool_calls(reply) == reply
+    assert _without_tool_calls(unavailable) == unavailable
+
+
+def test_a_tool_round_goes_back_as_the_whole_turn_and_a_response_per_call() -> None:
+    call_part = _call_part("set_timezone", "Europe/Kyiv", b"signature")
+    search = types.Part(tool_call=types.ToolCall(id="s1"), thought_signature=b"signature")
+    turn = types.Content(role="model", parts=[call_part, search])
+    call = ToolCall("set_timezone", {"zone": "Europe/Kyiv"})
+    tool_round = ToolRound(turn, (ToolResult(call, "Done."),))
+    question = Turn(Role.USER, "Я в Києві")
+    prompt = Prompt(system_instruction="", turns=(question,), tool_round=tool_round)
+
+    contents = _contents(prompt)
+
+    assert len(contents) == 3
+    assert contents[1] is turn
+    assert contents[2].role == "user"
+    assert contents[2].parts is not None
+    [part] = contents[2].parts
+    assert part.function_response == types.FunctionResponse(
+        id="id-Europe/Kyiv", name="set_timezone", response={"result": "Done."}
+    )
+
+
+def test_a_prompt_without_a_tool_round_is_just_its_turns() -> None:
+    question = Turn(Role.USER, "Привіт")
+    prompt = Prompt(system_instruction="", turns=(question,))
+
+    assert len(_contents(prompt)) == 1

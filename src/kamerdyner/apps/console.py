@@ -65,7 +65,7 @@ def main() -> None:
     pending = MessageFile(directory / "pending.json")
     memory_directory = directory / "memory"
     memory = NotesMemory(memory_directory, user.name, memory_llm)
-    chat = Chat(user, log, pending, memory, llm, utc_now)
+    chat = Chat(user, directory, log, pending, memory, llm, utc_now)
 
     type_ahead = TypeAhead()
     print(f"Kamerdyner — {user.name}. /exit or Ctrl+D to quit, /help for commands.")

@@ -1,13 +1,13 @@
 import asyncio
 import contextlib
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from pathlib import Path
 
 import pytest
 from fakes import FakeClock, FakeMemory, make_user
 
 from kamerdyner.chat import Chat, ConversationLog
-from kamerdyner.common.llm import GenerateResult, Prompt, Reply, Unavailable
+from kamerdyner.common.llm import GenerateResult, Prompt, Reply, ToolSpec, Unavailable
 from kamerdyner.common.store import MessageFile
 from kamerdyner.session import Session
 
@@ -20,7 +20,7 @@ class _GatedLLM:
         self.gate = asyncio.Event()
         self.prompts: list[Prompt] = []
 
-    async def generate(self, prompt: Prompt) -> GenerateResult:
+    async def generate(self, prompt: Prompt, tools: Sequence[ToolSpec] = ()) -> GenerateResult:
         self.prompts.append(prompt)
         await self.gate.wait()
         return self._results.pop(0)
@@ -48,7 +48,7 @@ def _session(
     memory = FakeMemory("")
     pending = MessageFile(directory / "pending.json")
     log = ConversationLog(directory)
-    chat = Chat(make_user(), log, pending, memory, llm, FakeClock())
+    chat = Chat(make_user(), directory, log, pending, memory, llm, FakeClock())
     session = Session(chat, limit_tokens, keep_tokens)
     return session, memory
 

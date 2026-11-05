@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from kamerdyner.common.llm import GenerateResult, Prompt, Role
+from kamerdyner.common.llm import GenerateResult, Prompt, Role, ToolSpec
 from kamerdyner.common.messages import Message
 from kamerdyner.memory.impl.compaction import conversation_tokens
 from kamerdyner.memory.memory import CompactionOutcome, NothingToCompact
@@ -40,14 +40,17 @@ class FakeClock:
 
 
 class ScriptedLLM:
-    """Returns the given results in order and records every prompt it receives."""
+    """Returns the given results in order and records every prompt it receives and the tools it
+    was given with it."""
 
     def __init__(self, results: Sequence[GenerateResult]) -> None:
         self._results = list(results)
         self.prompts: list[Prompt] = []
+        self.tools: list[Sequence[ToolSpec]] = []
 
-    async def generate(self, prompt: Prompt) -> GenerateResult:
+    async def generate(self, prompt: Prompt, tools: Sequence[ToolSpec] = ()) -> GenerateResult:
         self.prompts.append(prompt)
+        self.tools.append(tools)
         return self._results.pop(0)
 
 

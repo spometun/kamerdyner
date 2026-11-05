@@ -2,14 +2,29 @@ import json
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fakes import START, FakeClock, FakeMemory, ScriptedLLM, make_message, make_user
 
 from kamerdyner.chat import Chat, ConversationLog
-from kamerdyner.common.llm import GenerateResult, Incomplete, Prompt, Reply, Role, Turn, Unavailable
+from kamerdyner.common.llm import (
+    GenerateResult,
+    Incomplete,
+    Prompt,
+    Reply,
+    Role,
+    ToolCall,
+    ToolResult,
+    ToolRound,
+    ToolSpec,
+    Turn,
+    Unavailable,
+    WebSearch,
+)
 from kamerdyner.common.messages import Message
 from kamerdyner.common.store import MessageFile
 from kamerdyner.memory.memory import NotAbsorbed
+from kamerdyner.users import load_user
 
 
 class _Setup:
@@ -29,7 +44,7 @@ class _Setup:
 
     def reopen(self) -> Chat:
         user = make_user()
-        return Chat(user, self.log, self.pending, self.memory, self.llm, self.clock)
+        return Chat(user, self.directory, self.log, self.pending, self.memory, self.llm, self.clock)
 
     async def send(self, text: str) -> GenerateResult:
         self.chat.receive(text)
@@ -130,7 +145,7 @@ class _MidwayLLM:
         self._meanwhile = meanwhile
         self.prompts: list[Prompt] = []
 
-    async def generate(self, prompt: Prompt) -> GenerateResult:
+    async def generate(self, prompt: Prompt, tools: Sequence[ToolSpec] = ()) -> GenerateResult:
         self.prompts.append(prompt)
         if len(self.prompts) == 1:
             self._meanwhile()
@@ -144,7 +159,7 @@ async def test_a_message_arriving_during_a_reply_is_answered_next(tmp_path: Path
     log = ConversationLog(tmp_path)
     holder: list[Chat] = []
     llm = _MidwayLLM(["Відповідь 1", "Відповідь 2"], lambda: holder[0].receive("Друге"))
-    chat = Chat(make_user(), log, pending, memory, llm, FakeClock())
+    chat = Chat(make_user(), tmp_path, log, pending, memory, llm, FakeClock())
     holder.append(chat)
 
     chat.receive("Перше")
@@ -234,3 +249,155 @@ async def test_a_grounded_reply_is_remembered_whole_but_archived_without_its_tex
     logged = setup.logged_texts()
     assert logged[0] == "Яка остання версія Python?"
     assert logged[1].startswith("[Kamerdyner answered from a web search")
+
+
+def _set_timezone_call(zone: object) -> ToolCall:
+    return ToolCall("set_timezone", {"zone": zone})
+
+
+def _asks_for(*calls: ToolCall, grounded: bool = False) -> Reply:
+    return Reply("", grounded=grounded, tool_calls=calls, provider_turn="the model's turn")
+
+
+def _with_user_file(setup: _Setup) -> None:
+    settings = 'name = "Марта"\ntimezone = "America/Toronto"\n'
+    (setup.directory / "user.toml").write_text(settings, encoding="utf-8")
+
+
+async def test_a_reply_without_tool_calls_takes_one_request(tmp_path: Path) -> None:
+    setup = _Setup(tmp_path, [Reply("Привіт")])
+
+    await setup.send("Привіт")
+
+    assert len(setup.llm.prompts) == 1
+    assert [spec.name for spec in setup.llm.tools[0]] == ["set_timezone"]
+    assert setup.llm.prompts[0].tool_round is None
+    assert setup.memory_texts() == ["Привіт", "Привіт"]
+
+
+async def test_a_tool_call_runs_and_the_model_answers_with_no_tools_allowed(
+    tmp_path: Path,
+) -> None:
+    call = _set_timezone_call("Europe/Kyiv")
+    setup = _Setup(tmp_path, [_asks_for(call), Reply("Записала, тепер Київ")])
+    _with_user_file(setup)
+
+    result = await setup.send("Я тепер у Києві")
+
+    assert result == Reply("Записала, тепер Київ")
+    assert setup.llm.tools[1] == ()
+    stamp = "2026-10-04 Sun 21:32 UTC+03:00"
+    text = f"Time zone set to Europe/Kyiv. Local time is now {stamp}."
+    tool_round = ToolRound("the model's turn", (ToolResult(call, text),))
+    assert setup.llm.prompts[1].tool_round == tool_round
+    assert setup.llm.prompts[1].turns == setup.llm.prompts[0].turns
+
+
+async def test_the_new_zone_is_saved_and_applies_from_the_reply_on(tmp_path: Path) -> None:
+    call = _set_timezone_call("Europe/Kyiv")
+    setup = _Setup(tmp_path, [_asks_for(call), Reply("Ось"), Reply("Ще")])
+    _with_user_file(setup)
+
+    await setup.send("Я тепер у Києві")
+    await setup.send("А зараз?")
+
+    assert load_user(tmp_path).timezone == ZoneInfo("Europe/Kyiv")
+    [asked, answer, next_message, _] = setup.memory.conversation
+    assert asked.at.isoformat() == "2026-10-04T14:32:00-04:00"
+    assert answer.at.isoformat() == "2026-10-04T21:32:00+03:00"
+    assert next_message.at.isoformat() == "2026-10-04T21:32:00+03:00"
+
+
+async def test_tools_are_recorded_before_the_answer_but_the_client_gets_the_answer_alone(
+    tmp_path: Path,
+) -> None:
+    good = _set_timezone_call("Europe/Kyiv")
+    bad = _set_timezone_call("Mars/Base")
+    setup = _Setup(tmp_path, [_asks_for(good, bad), Reply("Готово")])
+    _with_user_file(setup)
+
+    result = await setup.send("Постав")
+
+    assert result == Reply("Готово")
+    assert setup.memory_texts()[-1] == (
+        'Model requested tool set_timezone(zone="Europe/Kyiv").\n'
+        "The system ran it, result: Time zone set to Europe/Kyiv. "
+        "Local time is now 2026-10-04 Sun 21:32 UTC+03:00.\n"
+        'Model requested tool set_timezone(zone="Mars/Base").\n'
+        'The system ran it, result: Error: unknown time zone "Mars/Base". '
+        "Use an IANA name such as Europe/Kyiv.\n"
+        "In the next request the model replied:\n"
+        "Готово"
+    )
+    assert setup.logged_texts()[-1] == setup.memory_texts()[-1]
+
+
+async def test_an_unknown_zone_is_told_to_the_model_and_changes_nothing(tmp_path: Path) -> None:
+    setup = _Setup(tmp_path, [_asks_for(_set_timezone_call("Mars/Base")), Reply("Не знаю такого")])
+    _with_user_file(setup)
+
+    await setup.send("Я на Марсі")
+
+    [result] = _round_of(setup).results
+    assert result.text.startswith('Error: unknown time zone "Mars/Base"')
+    assert load_user(tmp_path).timezone == ZoneInfo("America/Toronto")
+    assert setup.memory.conversation[-1].at.isoformat() == "2026-10-04T14:32:00-04:00"
+
+
+async def test_calls_out_of_contract_are_told_to_the_model(tmp_path: Path) -> None:
+    unknown = ToolCall("delete_everything", {})
+    not_a_string = _set_timezone_call(5)
+    missing = ToolCall("set_timezone", {})
+    setup = _Setup(tmp_path, [_asks_for(unknown, not_a_string, missing), Reply("Ось")])
+
+    await setup.send("Постав")
+
+    texts = [result.text for result in _round_of(setup).results]
+    assert texts == [
+        "Error: no tool delete_everything taking arguments {}.",
+        "Error: no tool set_timezone taking arguments {'zone': 5}.",
+        "Error: no tool set_timezone taking arguments {}.",
+    ]
+
+
+async def test_when_the_answer_after_tools_fails_the_message_keeps_waiting(tmp_path: Path) -> None:
+    call = _set_timezone_call("Europe/Kyiv")
+    setup = _Setup(
+        tmp_path,
+        [_asks_for(call), Unavailable("503"), _asks_for(call), Reply("Записала")],
+    )
+    _with_user_file(setup)
+
+    failed = await setup.send("Я тепер у Києві")
+
+    assert failed == Unavailable("503")
+    assert setup.pending_texts() == ["Я тепер у Києві"]
+    assert setup.memory_texts() == []
+    assert load_user(tmp_path).timezone == ZoneInfo("Europe/Kyiv")
+    result = await setup.chat.reply()
+    assert result == Reply("Записала")
+    assert setup.pending_texts() == []
+
+
+async def test_what_the_first_turn_found_on_the_web_counts_for_the_answer(tmp_path: Path) -> None:
+    search = WebSearch("погода Київ", "https://example.com/search")
+    first = Reply(
+        "",
+        grounded=True,
+        searches=(search,),
+        tool_calls=(_set_timezone_call("Europe/Kyiv"),),
+        provider_turn="the model's turn",
+    )
+    setup = _Setup(tmp_path, [first, Reply("У Києві +5")])
+    _with_user_file(setup)
+
+    result = await setup.send("Постав пояс і знайди погоду")
+
+    assert result == Reply("У Києві +5", grounded=True, searches=(search,))
+    assert setup.memory.conversation[-1].ephemeral
+
+
+def _round_of(setup: _Setup) -> ToolRound:
+    tool_round = setup.llm.prompts[1].tool_round
+    assert tool_round is not None, "The model got no tool results"
+    return tool_round

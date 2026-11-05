@@ -13,8 +13,12 @@ from google.genai import errors, types
 from kamerdyner.common.llm import (
     GenerateResult,
     Incomplete,
+    LLMError,
     Prompt,
     Reply,
+    ToolCall,
+    ToolRound,
+    ToolSpec,
     Turn,
     Unavailable,
     WebSearch,
@@ -42,19 +46,24 @@ class GeminiLLM:
         self._model = model
         self._thinking_level = thinking_level
         self._seed = seed
-        self._tools = _web_tools() if web else None
+        self._web_tools = _web_tools() if web else []
 
-    async def generate(self, prompt: Prompt) -> GenerateResult:
-        contents = _contents(prompt.turns)
+    async def generate(self, prompt: Prompt, tools: Sequence[ToolSpec] = ()) -> GenerateResult:
+        contents = _contents(prompt)
         thinking = types.ThinkingConfig(thinking_level=self._thinking_level)
-        # Tool calls, once there are tools, are run by us, not by the SDK.
+        # Tool calls are run by us, not by the SDK.
         manual_calls = types.AutomaticFunctionCallingConfig(disable=True)
+        functions = _function_tools(tools)
+        # The API refuses our functions next to its built-in tools without this.
+        mixed = bool(functions) and bool(self._web_tools)
+        tool_config = types.ToolConfig(include_server_side_tool_invocations=mixed)
         config = types.GenerateContentConfig(
             system_instruction=prompt.system_instruction,
             thinking_config=thinking,
             automatic_function_calling=manual_calls,
             seed=self._seed,
-            tools=self._tools,
+            tools=[*functions, *self._web_tools],
+            tool_config=tool_config,
         )
         try:
             # The SDK's signature mentions PIL images, unknown without Pillow installed.
@@ -66,7 +75,8 @@ class GeminiLLM:
         except (aiohttp.ClientError, httpx.HTTPError, TimeoutError) as error:
             return Unavailable(detail=f"Cannot reach Gemini: {error!r}")
         _log_usage(response)
-        return _result(response)
+        result = _result(response)
+        return result if tools else _without_tool_calls(result)
 
 
 def make_client(api_key: str, timeout_seconds: int, attempts: int) -> genai.Client:
@@ -77,13 +87,53 @@ def make_client(api_key: str, timeout_seconds: int, attempts: int) -> genai.Clie
     return genai.Client(api_key=api_key, http_options=options)
 
 
-def _contents(turns: Sequence[Turn]) -> list[types.Content]:
+def _contents(prompt: Prompt) -> list[types.Content]:
+    contents = _turn_contents(prompt.turns)
+    if prompt.tool_round is not None:
+        round_contents = _round_contents(prompt.tool_round)
+        contents.extend(round_contents)
+    return contents
+
+
+def _turn_contents(turns: Sequence[Turn]) -> list[types.Content]:
     contents: list[types.Content] = []
     for turn in turns:
         part = types.Part(text=turn.text)
         content = types.Content(role=turn.role.value, parts=[part])
         contents.append(content)
     return contents
+
+
+def _round_contents(tool_round: ToolRound) -> list[types.Content]:
+    """The model's turn exactly as it came, then a response to each of its calls. The whole turn
+    goes back: the API refuses a call without its thought signature, and what a built-in tool
+    found in that turn lives only in its other parts."""
+    turn = tool_round.provider_turn
+    assert isinstance(turn, types.Content), (
+        f"Internal error. A tool round holds {turn!r} instead of the model's turn"
+    )
+    calls = [part.function_call for part in _content_parts(turn) if part.function_call is not None]
+    responses: list[types.Part] = []
+    for call, result in zip(calls, tool_round.results, strict=True):
+        response = types.FunctionResponse(
+            id=call.id, name=call.name, response={"result": result.text}
+        )
+        part = types.Part(function_response=response)
+        responses.append(part)
+    answer = types.Content(role="user", parts=responses)
+    return [turn, answer]
+
+
+def _function_tools(specs: Sequence[ToolSpec]) -> list[types.Tool]:
+    declarations: list[types.FunctionDeclaration] = []
+    for spec in specs:
+        declaration = types.FunctionDeclaration(
+            name=spec.name,
+            description=spec.description,
+            parameters_json_schema=spec.parameters,
+        )
+        declarations.append(declaration)
+    return [types.Tool(function_declarations=declarations)] if declarations else []
 
 
 def _result(response: types.GenerateContentResponse) -> GenerateResult:
@@ -95,27 +145,63 @@ def _result(response: types.GenerateContentResponse) -> GenerateResult:
         )
     candidate = response.candidates[0]
     text = _answer_text(candidate)
+    calls = _tool_calls(candidate)
     finish_reason = candidate.finish_reason
-    if finish_reason is types.FinishReason.STOP and text:
+    if finish_reason is types.FinishReason.STOP and (text or calls):
         grounded = _grounded(candidate)
         searches = _searches(candidate)
-        return Reply(text=text, grounded=grounded, searches=searches)
+        provider_turn = candidate.content if calls else None
+        return Reply(
+            text=text,
+            grounded=grounded,
+            searches=searches,
+            tool_calls=calls,
+            provider_turn=provider_turn,
+        )
     return Incomplete(reason=f"finish reason {finish_reason}, {len(text)} chars", partial_text=text)
 
 
-def _answer_text(candidate: types.Candidate) -> str:
-    """The joined text of the parts that carry a thought signature. Gemini 3 signs every answer;
-    a part without a signature is the model's reasoning come back unmarked, as if it were the answer
-    (gemini-3.8-flash at a low thinking level, a few percent of replies). Such parts are dropped
-    and logged."""
-    content = candidate.content
+def _without_tool_calls(result: GenerateResult) -> GenerateResult:
+    """`result` of a request that allowed no tools; a model calling one anyway is an error."""
+    if isinstance(result, LLMError) or not result.tool_calls:
+        return result
+    names = [call.name for call in result.tool_calls]
+    logger.warning("The model called %s when no tools were allowed", names)
+    return Incomplete(reason=f"tool calls {names} when none allowed", partial_text=result.text)
+
+
+def _content_parts(content: types.Content | None) -> list[types.Part]:
     # A candidate stopped before any output (e.g. by safety filters) comes without content.
-    parts = [] if content is None or content.parts is None else content.parts
+    return [] if content is None or content.parts is None else content.parts
+
+
+def _tool_calls(candidate: types.Candidate) -> tuple[ToolCall, ...]:
+    calls: list[ToolCall] = []
+    for part in _content_parts(candidate.content):
+        function_call = part.function_call
+        if function_call is None:
+            continue
+        name = function_call.name
+        assert name is not None, f"Unexpected Gemini function call without a name: {part!r}"
+        # A call without arguments may come without them altogether.
+        arguments = {} if function_call.args is None else function_call.args
+        call = ToolCall(name=name, arguments=arguments)
+        calls.append(call)
+    return tuple(calls)
+
+
+def _answer_text(candidate: types.Candidate) -> str:
+    """The joined text of the text parts that carry a thought signature. Gemini 3 signs every
+    answer; a text part without a signature is the model's reasoning come back unmarked, as if it
+    were the answer (gemini-3.8-flash at a low thinking level, a few percent of replies). Such
+    parts are dropped and logged."""
     texts: list[str] = []
-    for part in parts:
+    for part in _content_parts(candidate.content):
+        if part.text is None:
+            continue
         if part.thought_signature is None:
             logger.warning("Dropped a Gemini response part without a thought signature: %r", part)
-        elif part.text is not None:
+        else:
             texts.append(part.text)
     return "".join(texts)
 
@@ -128,16 +214,18 @@ def _web_tools() -> list[types.Tool]:
 
 def _grounded(candidate: types.Candidate) -> bool:
     """Whether the answer rests on a Google search or on pages it read; what was searched and
-    read is logged."""
+    read is logged. A turn that also calls our tools shows its searches only as `tool_call` parts,
+    without metadata."""
+    used_web = any(part.tool_call is not None for part in _content_parts(candidate.content))
     metadata = candidate.grounding_metadata
     # Without web tools, or when the model used none, the metadata is absent or empty.
     if metadata is None:
-        return False
+        return used_web
     queries = [] if metadata.web_search_queries is None else metadata.web_search_queries
     chunks = [] if metadata.grounding_chunks is None else metadata.grounding_chunks
     pages = [chunk.web.uri for chunk in chunks if chunk.web is not None]
     if not queries and not pages:
-        return False
+        return used_web
     logger.info("Grounded on searches %s, pages %s", queries, pages)
     return True
 

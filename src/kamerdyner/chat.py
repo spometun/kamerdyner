@@ -1,6 +1,7 @@
 """One user's chat with the assistant: the incoming messages, their memory and the model put
 together, and the archive of everything said."""
 
+import dataclasses
 import json
 import logging
 import os
@@ -9,12 +10,25 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import assert_never
 
-from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, Reply, Role, Unavailable
-from kamerdyner.common.messages import Message, without_ephemeral_text
+from kamerdyner.common.llm import (
+    LLM,
+    GenerateResult,
+    Incomplete,
+    LLMError,
+    Prompt,
+    Reply,
+    Role,
+    ToolCall,
+    ToolResult,
+    ToolRound,
+    ToolSpec,
+    Unavailable,
+)
+from kamerdyner.common.messages import Message, format_time_with_offset, without_ephemeral_text
 from kamerdyner.common.store import MessageFile, message_record
 from kamerdyner.memory.memory import CompactionOutcome, Memory
 from kamerdyner.prompt import build_prompt
-from kamerdyner.users import User
+from kamerdyner.users import User, find_timezone, save_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +74,15 @@ class Chat:
     Messages may keep arriving while a reply or a compaction is under way: they wait in
     `pending` and are answered by the next `reply`. `reply` and `compact` themselves must not
     overlap; the client runs them one at a time.
+
+    The model may call tools while answering: one round of them, then it answers. What they did
+    stays in the conversation as text at the head of the reply, and the client never sees that.
     """
 
     def __init__(
         self,
         user: User,
+        directory: Path,
         log: ConversationLog,
         pending: MessageFile,
         memory: Memory,
@@ -72,6 +90,7 @@ class Chat:
         clock: Clock,
     ) -> None:
         self._user = user
+        self._directory = directory
         self._log = log
         self._pending = pending
         self._memory = memory
@@ -105,14 +124,18 @@ class Chat:
         memory = self._memory.content()
         conversation = (*self._memory.conversation, *seen)
         prompt = build_prompt(self._user, memory, conversation)
-        result = await self._llm.generate(prompt)
+        first = await self._llm.generate(prompt, _TOOLS)
+        result, tools_record = await self._finish_tools(prompt, first)
         match result:
             case Reply(text=reply_text, grounded=grounded):
                 answered_at = self._now()
                 # Search results may be shown and kept for the conversation, not archived or learned
                 # from: a grounded reply is ephemeral.
                 reply = Message(
-                    role=Role.MODEL, text=reply_text, at=answered_at, ephemeral=grounded
+                    role=Role.MODEL,
+                    text=tools_record + reply_text,
+                    at=answered_at,
+                    ephemeral=grounded,
                 )
                 self._log.append(reply)
                 exchange = (*seen, reply)
@@ -133,6 +156,61 @@ class Chat:
         """Moves the oldest part of memory's recent conversation into its long-term memory,
         keeping at least `keep_tokens` of the newest."""
         return await self._memory.compact(keep_tokens)
+
+    async def _finish_tools(
+        self, prompt: Prompt, first: GenerateResult
+    ) -> tuple[GenerateResult, str]:
+        """Takes the model's first response to the end: runs the tools it asked for and gets its
+        answer, with no tools allowed any more. Returns that final result and the record of the
+        tools to keep in front of the answer, empty when none ran. A tool that ran stays done
+        even if the answer then fails, and may run again when the messages are answered anew."""
+        if isinstance(first, LLMError) or not first.tool_calls:
+            return first, ""
+        results = self._run_tools(first.tool_calls)
+        tool_round = ToolRound(first.provider_turn, results)
+        with_results = dataclasses.replace(prompt, tool_round=tool_round)
+        final = await self._llm.generate(with_results)
+        if isinstance(final, LLMError):
+            return final, ""
+        assert not final.tool_calls, (
+            f"Internal error. Tool calls {final.tool_calls} with no tools allowed, "
+            f"user {self._user.id}"
+        )
+        # What the first turn found on the web went into the answer too.
+        whole = dataclasses.replace(
+            final,
+            grounded=first.grounded or final.grounded,
+            searches=(*first.searches, *final.searches),
+        )
+        return whole, _tools_record(results)
+
+    def _run_tools(self, calls: Sequence[ToolCall]) -> tuple[ToolResult, ...]:
+        results: list[ToolResult] = []
+        for call in calls:
+            text = self._run_tool(call)
+            logger.info("Tool %s of user %s: %s", call, self._user.id, text)
+            result = ToolResult(call=call, text=text)
+            results.append(result)
+        return tuple(results)
+
+    def _run_tool(self, call: ToolCall) -> str:
+        """Runs a call of the model; a call out of contract gets its error told to the model."""
+        match call:
+            case ToolCall(name=_SET_TIMEZONE.name, arguments={"zone": str() as zone}):
+                return self._set_timezone(zone)
+            case _:
+                logger.warning("Rejected a tool call of user %s: %s", self._user.id, call)
+                return f"Error: no tool {call.name} taking arguments {dict(call.arguments)}."
+
+    def _set_timezone(self, zone: str) -> str:
+        timezone = find_timezone(zone)
+        if timezone is None:
+            return f'Error: unknown time zone "{zone}". Use an IANA name such as Europe/Kyiv.'
+        save_timezone(self._directory, timezone)
+        self._user = dataclasses.replace(self._user, timezone=timezone)
+        now = self._now()
+        stamp = format_time_with_offset(now)
+        return f"Time zone set to {zone}. Local time is now {stamp}."
 
     def _now(self) -> datetime:
         """The current time on the user's clock."""
@@ -162,6 +240,45 @@ class Chat:
                 self._user.id,
             )
             self._pending.replace(waiting)
+
+
+_SET_TIMEZONE = ToolSpec(
+    name="set_timezone",
+    description=(
+        "Sets the user's time zone, which the timestamps of their messages follow from now on. "
+        "Call it only when the user plainly says they moved, are travelling or want it changed; "
+        "never on a guess."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "zone": {"type": "string", "description": "IANA time zone name, e.g. Europe/Kyiv"},
+        },
+        "required": ["zone"],
+    },
+)
+
+_TOOLS = (_SET_TIMEZONE,)
+
+
+def _tools_record(results: Sequence[ToolResult]) -> str:
+    """What the tools did, as it stands before the answer in the conversation."""
+    lines: list[str] = []
+    for result in results:
+        call = _render_call(result.call)
+        lines.append(f"Model requested tool {call}.")
+        lines.append(f"The system ran it, result: {result.text}")
+    lines.append("In the next request the model replied:\n")
+    return "\n".join(lines)
+
+
+def _render_call(call: ToolCall) -> str:
+    arguments: list[str] = []
+    for name, value in call.arguments.items():
+        rendered = json.dumps(value, ensure_ascii=False)
+        arguments.append(f"{name}={rendered}")
+    joined = ", ".join(arguments)
+    return f"{call.name}({joined})"
 
 
 def _drop_torn_tail(path: Path) -> None:
