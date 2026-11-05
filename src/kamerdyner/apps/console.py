@@ -83,9 +83,10 @@ def main() -> None:
                 if not keep_going:
                     break
                 continue
-            sending = chat.send(text)
+            chat.receive(text)
+            replying = chat.reply()
             with type_ahead.collecting():
-                result = runner.run(sending)
+                result = runner.run(replying)
             _show(result, chat.conversation_tokens)
             if chat.conversation_tokens < _LIMIT_TOKENS:
                 continue

@@ -31,6 +31,10 @@ class _Setup:
         user = make_user()
         return Chat(user, self.log, self.pending, self.memory, self.llm, self.clock)
 
+    async def send(self, text: str) -> GenerateResult:
+        self.chat.receive(text)
+        return await self.chat.reply()
+
     def logged_texts(self) -> list[str]:
         lines = (self.directory / "log.jsonl").read_text(encoding="utf-8").splitlines()
         return [json.loads(line)["text"] for line in lines]
@@ -45,7 +49,7 @@ class _Setup:
 async def test_reply_goes_to_memory_with_the_message(tmp_path: Path) -> None:
     setup = _Setup(tmp_path, [Reply("Привіт, Марто!")])
 
-    result = await setup.chat.send("Привіт")
+    result = await setup.send("Привіт")
 
     assert result == Reply("Привіт, Марто!")
     stored = [(message.role, message.text) for message in setup.memory.conversation]
@@ -61,7 +65,7 @@ async def test_reply_goes_to_memory_with_the_message(tmp_path: Path) -> None:
 async def test_messages_carry_the_users_local_time(tmp_path: Path) -> None:
     setup = _Setup(tmp_path, [Reply("Ось")])
 
-    await setup.chat.send("Котра година?")
+    await setup.send("Котра година?")
 
     [question, answer] = setup.memory.conversation
     assert question.at == START
@@ -74,7 +78,7 @@ async def test_messages_carry_the_users_local_time(tmp_path: Path) -> None:
 async def test_message_is_on_disk_before_the_model_is_called(tmp_path: Path) -> None:
     setup = _Setup(tmp_path, [Unavailable("503")])
 
-    await setup.chat.send("Перше")
+    await setup.send("Перше")
 
     reopened = MessageFile(tmp_path / "pending.json")
     assert [message.text for message in reopened.messages] == ["Перше"]
@@ -85,11 +89,11 @@ async def test_message_is_on_disk_before_the_model_is_called(tmp_path: Path) -> 
 async def test_failed_reply_keeps_the_message_and_the_next_one_joins_it(tmp_path: Path) -> None:
     setup = _Setup(tmp_path, [Unavailable("503"), Incomplete("MAX_TOKENS", "Пів"), Reply("Ось")])
 
-    unavailable = await setup.chat.send("Перше")
+    unavailable = await setup.send("Перше")
     setup.clock.advance(1)
-    incomplete = await setup.chat.send("Друге")
+    incomplete = await setup.send("Друге")
     setup.clock.advance(1)
-    await setup.chat.send("Третє")
+    await setup.send("Третє")
 
     assert unavailable == Unavailable("503")
     assert incomplete == Incomplete("MAX_TOKENS", "Пів")
@@ -108,7 +112,7 @@ async def test_model_sees_memorys_conversation_then_the_waiting_messages(tmp_pat
     ]
     setup = _Setup(tmp_path, [Reply("Ось")], remembered=earlier)
 
-    await setup.chat.send("А в тебе?")
+    await setup.send("А в тебе?")
 
     assert setup.llm.prompts[0].turns == (
         Turn(Role.USER, "[2026-10-04 Sun 13:32 UTC-04:00] Як справи?"),
@@ -223,7 +227,7 @@ async def test_a_grounded_reply_is_remembered_whole_but_archived_without_its_tex
 ) -> None:
     setup = _Setup(tmp_path, [Reply("Python 3.15.2", grounded=True)])
 
-    await setup.chat.send("Яка остання версія Python?")
+    await setup.send("Яка остання версія Python?")
 
     assert setup.memory_texts() == ["Яка остання версія Python?", "Python 3.15.2"]
     assert setup.memory.conversation[-1].ephemeral

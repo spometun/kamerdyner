@@ -51,11 +51,11 @@ class ConversationLog:
 class Chat:
     """Answers a user's messages; each answered exchange goes to memory.
 
-    A client stores each incoming message with `receive` as soon as it arrives and asks for an
-    answer with `reply` — `send` does both — and calls `compact` when it is a good moment to tidy
-    up memory: right after showing the reply, after a pause in the conversation, or on the
-    user's request. The messages still waiting for a reply are kept in `pending`, so a crash
-    loses none of them; the model sees memory's conversation followed by them.
+    A client stores each incoming message with `receive` as soon as it arrives, asks for an
+    answer with `reply`, and calls `compact` when it is a good moment to tidy up memory: right
+    after showing the reply, after a pause in the conversation, or on the user's request. The
+    messages still waiting for a reply are kept in `pending`, so a crash loses none of them; the
+    model sees memory's conversation followed by them.
 
     Messages may keep arriving while a reply or a compaction is under way: they wait in
     `pending` and are answered by the next `reply`. `reply` and `compact` themselves must not
@@ -128,11 +128,6 @@ class Chat:
             case _:
                 assert_never(result)
         return result
-
-    async def send(self, text: str) -> GenerateResult:
-        """Stores the message, then answers it."""
-        self.receive(text)
-        return await self.reply()
 
     async def compact(self, keep_tokens: int) -> CompactionOutcome:
         """Moves the oldest part of memory's recent conversation into its long-term memory,
