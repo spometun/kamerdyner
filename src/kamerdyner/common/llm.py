@@ -43,33 +43,14 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
-class ToolResult:
-    """What running `call` came to, in words for the model; a failure is told the same way."""
-
-    call: ToolCall
-    text: str
-
-
-@dataclass(frozen=True)
-class ToolRound:
-    """The tools the model asked for, run: `provider_turn` is the `Reply.provider_turn` that
-    asked, `results` hold one result per call of that reply, in its order."""
-
-    provider_turn: object
-    results: tuple[ToolResult, ...]
-
-
-@dataclass(frozen=True)
 class Prompt:
-    """A request to the model: the system instruction and the dialogue so far, and, when the
-    model asked for tools in answer to these turns, what running them came to.
+    """A request to the model: the system instruction and the dialogue so far.
 
     Turns alternate between the user and the model, starting and ending with the user.
     """
 
     system_instruction: str
     turns: tuple[Turn, ...]
-    tool_round: ToolRound | None = None
 
     def __post_init__(self) -> None:
         if not self.turns:
@@ -103,14 +84,12 @@ class Reply:
     the provider's terms may require showing with the answer.
 
     With `tool_calls`, the model is not done: it waits for their results, and `text` (possibly
-    empty) is not the answer. `provider_turn` is then the provider's own record of this turn, to
-    hand back unread in `ToolRound`; without calls it is None."""
+    empty) is not the answer."""
 
     text: str
     grounded: bool = False
     searches: tuple[WebSearch, ...] = ()
     tool_calls: tuple[ToolCall, ...] = ()
-    provider_turn: object = None
 
 
 @dataclass(frozen=True)

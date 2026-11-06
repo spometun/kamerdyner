@@ -17,7 +17,6 @@ from kamerdyner.common.llm import (
     Prompt,
     Reply,
     ToolCall,
-    ToolRound,
     ToolSpec,
     Turn,
     Unavailable,
@@ -49,7 +48,7 @@ class GeminiLLM:
         self._web_tools = _web_tools() if web else []
 
     async def generate(self, prompt: Prompt, tools: Sequence[ToolSpec] = ()) -> GenerateResult:
-        contents = _contents(prompt)
+        contents = _contents(prompt.turns)
         thinking = types.ThinkingConfig(thinking_level=self._thinking_level)
         # Tool calls are run by us, not by the SDK.
         manual_calls = types.AutomaticFunctionCallingConfig(disable=True)
@@ -87,41 +86,13 @@ def make_client(api_key: str, timeout_seconds: int, attempts: int) -> genai.Clie
     return genai.Client(api_key=api_key, http_options=options)
 
 
-def _contents(prompt: Prompt) -> list[types.Content]:
-    contents = _turn_contents(prompt.turns)
-    if prompt.tool_round is not None:
-        round_contents = _round_contents(prompt.tool_round)
-        contents.extend(round_contents)
-    return contents
-
-
-def _turn_contents(turns: Sequence[Turn]) -> list[types.Content]:
+def _contents(turns: Sequence[Turn]) -> list[types.Content]:
     contents: list[types.Content] = []
     for turn in turns:
         part = types.Part(text=turn.text)
         content = types.Content(role=turn.role.value, parts=[part])
         contents.append(content)
     return contents
-
-
-def _round_contents(tool_round: ToolRound) -> list[types.Content]:
-    """The model's turn exactly as it came, then a response to each of its calls. The whole turn
-    goes back: the API refuses a call without its thought signature, and what a built-in tool
-    found in that turn lives only in its other parts."""
-    turn = tool_round.provider_turn
-    assert isinstance(turn, types.Content), (
-        f"Internal error. A tool round holds {turn!r} instead of the model's turn"
-    )
-    calls = [part.function_call for part in _content_parts(turn) if part.function_call is not None]
-    responses: list[types.Part] = []
-    for call, result in zip(calls, tool_round.results, strict=True):
-        response = types.FunctionResponse(
-            id=call.id, name=call.name, response={"result": result.text}
-        )
-        part = types.Part(function_response=response)
-        responses.append(part)
-    answer = types.Content(role="user", parts=responses)
-    return [turn, answer]
 
 
 def _function_tools(specs: Sequence[ToolSpec]) -> list[types.Tool]:
@@ -150,14 +121,7 @@ def _result(response: types.GenerateContentResponse) -> GenerateResult:
     if finish_reason is types.FinishReason.STOP and (text or calls):
         grounded = _grounded(candidate)
         searches = _searches(candidate)
-        provider_turn = candidate.content if calls else None
-        return Reply(
-            text=text,
-            grounded=grounded,
-            searches=searches,
-            tool_calls=calls,
-            provider_turn=provider_turn,
-        )
+        return Reply(text=text, grounded=grounded, searches=searches, tool_calls=calls)
     return Incomplete(reason=f"finish reason {finish_reason}, {len(text)} chars", partial_text=text)
 
 

@@ -14,8 +14,6 @@ from kamerdyner.common.llm import (
     Reply,
     Role,
     ToolCall,
-    ToolResult,
-    ToolRound,
     ToolSpec,
     Turn,
     Unavailable,
@@ -256,7 +254,7 @@ def _set_timezone_call(zone: object) -> ToolCall:
 
 
 def _asks_for(*calls: ToolCall, grounded: bool = False) -> Reply:
-    return Reply("", grounded=grounded, tool_calls=calls, provider_turn="the model's turn")
+    return Reply("", grounded=grounded, tool_calls=calls)
 
 
 def _with_user_file(setup: _Setup) -> None:
@@ -271,7 +269,6 @@ async def test_a_reply_without_tool_calls_takes_one_request(tmp_path: Path) -> N
 
     assert len(setup.llm.prompts) == 1
     assert [spec.name for spec in setup.llm.tools[0]] == ["set_timezone"]
-    assert setup.llm.prompts[0].tool_round is None
     assert setup.memory_texts() == ["Привіт", "Привіт"]
 
 
@@ -288,9 +285,9 @@ async def test_a_tool_call_runs_and_the_model_answers_with_no_tools_allowed(
     assert setup.llm.tools[1] == ()
     stamp = "2026-10-04 Sun 21:32 UTC+03:00"
     text = f"Time zone set to Europe/Kyiv. Local time is now {stamp}."
-    tool_round = ToolRound("the model's turn", (ToolResult(call, text),))
-    assert setup.llm.prompts[1].tool_round == tool_round
-    assert setup.llm.prompts[1].turns == setup.llm.prompts[0].turns
+    asked = Turn(Role.MODEL, 'Model requested tool set_timezone(zone="Europe/Kyiv").')
+    told = Turn(Role.USER, f"The system ran it, result: {text}")
+    assert setup.llm.prompts[1].turns == (*setup.llm.prompts[0].turns, asked, told)
 
 
 async def test_the_new_zone_is_saved_and_applies_from_the_reply_on(tmp_path: Path) -> None:
@@ -338,8 +335,7 @@ async def test_an_unknown_zone_is_told_to_the_model_and_changes_nothing(tmp_path
 
     await setup.send("Я на Марсі")
 
-    [result] = _round_of(setup).results
-    assert result.text.startswith('Error: unknown time zone "Mars/Base"')
+    assert 'Error: unknown time zone "Mars/Base"' in setup.llm.prompts[1].turns[-1].text
     assert load_user(tmp_path).timezone == ZoneInfo("America/Toronto")
     assert setup.memory.conversation[-1].at.isoformat() == "2026-10-04T14:32:00-04:00"
 
@@ -352,12 +348,11 @@ async def test_calls_out_of_contract_are_told_to_the_model(tmp_path: Path) -> No
 
     await setup.send("Постав")
 
-    texts = [result.text for result in _round_of(setup).results]
-    assert texts == [
-        "Error: no tool delete_everything taking arguments {}.",
-        "Error: no tool set_timezone taking arguments {'zone': 5}.",
-        "Error: no tool set_timezone taking arguments {}.",
-    ]
+    assert setup.llm.prompts[1].turns[-1].text == (
+        "The system ran it, result: Error: no tool delete_everything taking arguments {}.\n"
+        "The system ran it, result: Error: no tool set_timezone taking arguments {'zone': 5}.\n"
+        "The system ran it, result: Error: no tool set_timezone taking arguments {}."
+    )
 
 
 async def test_when_the_answer_after_tools_fails_the_message_keeps_waiting(tmp_path: Path) -> None:
@@ -386,7 +381,6 @@ async def test_what_the_first_turn_found_on_the_web_counts_for_the_answer(tmp_pa
         grounded=True,
         searches=(search,),
         tool_calls=(_set_timezone_call("Europe/Kyiv"),),
-        provider_turn="the model's turn",
     )
     setup = _Setup(tmp_path, [first, Reply("У Києві +5")])
     _with_user_file(setup)
@@ -395,9 +389,3 @@ async def test_what_the_first_turn_found_on_the_web_counts_for_the_answer(tmp_pa
 
     assert result == Reply("У Києві +5", grounded=True, searches=(search,))
     assert setup.memory.conversation[-1].ephemeral
-
-
-def _round_of(setup: _Setup) -> ToolRound:
-    tool_round = setup.llm.prompts[1].tool_round
-    assert tool_round is not None, "The model got no tool results"
-    return tool_round
