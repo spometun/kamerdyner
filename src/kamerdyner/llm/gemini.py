@@ -1,5 +1,6 @@
 """The model on the Gemini API. All use of the google-genai SDK lives in this module."""
 
+import base64
 import logging
 import urllib.parse
 from collections.abc import Sequence
@@ -31,7 +32,10 @@ class GeminiLLM:
     the same prompt gets the same reply (best effort on Google's side, and only for the same
     model version). With `web`, the model may search Google and read the pages it is given, when
     it decides to; such a reply is `grounded`. Retries of transient failures (429, 5xx, timeouts)
-    are configured on the client; what still fails comes back as a value."""
+    are configured on the client; what still fails comes back as a value.
+
+    Provider data is the thought signature of the reply's text in base64: sent back on the text,
+    it brings what the model thought in that turn into the request."""
 
     def __init__(
         self,
@@ -89,10 +93,26 @@ def make_client(api_key: str, timeout_seconds: int, attempts: int) -> genai.Clie
 def _contents(turns: Sequence[Turn]) -> list[types.Content]:
     contents: list[types.Content] = []
     for turn in turns:
-        part = types.Part(text=turn.text)
+        signature = _decoded_signature(turn.provider_data)
+        part = types.Part(text=turn.text, thought_signature=signature)
         content = types.Content(role=turn.role.value, parts=[part])
         contents.append(content)
     return contents
+
+
+def _decoded_signature(provider_data: str) -> bytes | None:
+    return base64.b64decode(provider_data, validate=True) if provider_data else None
+
+
+def _encoded_signature(candidate: types.Candidate) -> str:
+    """The signature of the last signed text part, the one that closes the answer; empty when
+    there is none. The text of a turn goes back as one part, so one signature goes with it."""
+    signature = b""
+    for part in _content_parts(candidate.content):
+        if part.text is not None and part.thought_signature is not None:
+            signature = part.thought_signature
+    encoded = base64.b64encode(signature)
+    return encoded.decode("ascii")
 
 
 def _function_tools(specs: Sequence[ToolSpec]) -> list[types.Tool]:
@@ -121,7 +141,14 @@ def _result(response: types.GenerateContentResponse) -> GenerateResult:
     if finish_reason is types.FinishReason.STOP and (text or calls):
         grounded = _grounded(candidate)
         searches = _searches(candidate)
-        return Reply(text=text, grounded=grounded, searches=searches, tool_calls=calls)
+        provider_data = _encoded_signature(candidate)
+        return Reply(
+            text=text,
+            grounded=grounded,
+            searches=searches,
+            tool_calls=calls,
+            provider_data=provider_data,
+        )
     return Incomplete(reason=f"finish reason {finish_reason}, {len(text)} chars", partial_text=text)
 
 

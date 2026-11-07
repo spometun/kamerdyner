@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 from fakes import make_message, make_user
 
@@ -57,3 +59,27 @@ def test_memory_goes_into_the_system_instruction() -> None:
 def test_prompt_rejects_malformed_dialogue(turns: tuple[Turn, ...]) -> None:
     with pytest.raises(ValueError, match="Invalid input"):
         Prompt(system_instruction="", turns=turns)
+
+
+def test_a_turn_carries_the_provider_data_of_its_message() -> None:
+    question = make_message(Role.USER, "Як справи?")
+    answer = make_message(Role.MODEL, "Добре", minutes=1)
+    answer = dataclasses.replace(answer, provider_data="data")
+    follow_up = make_message(Role.USER, "Чудово", minutes=2)
+
+    prompt = build_prompt(make_user(), "", [question, answer, follow_up])
+
+    assert [turn.provider_data for turn in prompt.turns] == ["", "data", ""]
+
+
+def test_a_merged_turn_keeps_the_provider_data_of_its_last_message() -> None:
+    first = make_message(Role.MODEL, "Перше")
+    first = dataclasses.replace(first, provider_data="older")
+    second = make_message(Role.MODEL, "Друге", minutes=1)
+    second = dataclasses.replace(second, provider_data="newer")
+    question = make_message(Role.USER, "Ну?", minutes=2)
+    opening = make_message(Role.USER, "Привіт", minutes=-1)
+
+    prompt = build_prompt(make_user(), "", [opening, first, second, question])
+
+    assert prompt.turns[1].provider_data == "newer"

@@ -389,3 +389,35 @@ async def test_what_the_first_turn_found_on_the_web_counts_for_the_answer(tmp_pa
 
     assert result == Reply("У Києві +5", grounded=True, searches=(search,))
     assert setup.memory.conversation[-1].ephemeral
+
+
+async def test_a_reply_keeps_its_provider_data_for_the_next_request_not_for_the_archive(
+    tmp_path: Path,
+) -> None:
+    setup = _Setup(tmp_path, [Reply("Вітаю", provider_data="thoughts"), Reply("Ось")])
+
+    await setup.send("Привіт")
+    await setup.send("Далі")
+
+    assert setup.memory.conversation[1].provider_data == "thoughts"
+    assert setup.llm.prompts[1].turns[1].provider_data == "thoughts"
+    log = (tmp_path / "log.jsonl").read_text(encoding="utf-8")
+    assert "thoughts" not in log
+
+
+async def test_a_grounded_reply_keeps_no_provider_data(tmp_path: Path) -> None:
+    setup = _Setup(tmp_path, [Reply("У Києві +5", grounded=True, provider_data="thoughts")])
+
+    await setup.send("Яка погода?")
+
+    assert setup.memory.conversation[-1].provider_data == ""
+
+
+async def test_a_reply_after_tools_keeps_no_provider_data(tmp_path: Path) -> None:
+    call = _set_timezone_call("Europe/Kyiv")
+    setup = _Setup(tmp_path, [_asks_for(call), Reply("Готово", provider_data="thoughts")])
+    _with_user_file(setup)
+
+    await setup.send("Я тепер у Києві")
+
+    assert setup.memory.conversation[-1].provider_data == ""

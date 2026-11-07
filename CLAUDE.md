@@ -35,7 +35,8 @@ its users are the user directories with a `telegram_id`). A user is a directory 
 of theirs: `user.toml` (name, timezone), `pending.json` (their messages still waiting for a reply,
 kept by `Chat`), `memory/` with `latest.json` (the recent conversation, what the model sees),
 `notes.md` (long-term memory, what goes into the system instruction) and `memory.log` (what
-memory did, for a person to read), and `log/` with `log.jsonl` (the append-only archive, never
+memory did, for a person to read; `latest.json` also keeps each plain reply's `provider_data`, the
+provider's opaque addition that goes back next to the text), and `log/` with `log.jsonl` (the append-only archive, never
 read on the way to the model) and the program's log.
 
 Environment: conda env `kamerdyner` from `environment.yml`; every dependency is declared in

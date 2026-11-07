@@ -40,7 +40,8 @@ def utc_now() -> datetime:
 class ConversationLog:
     """The archive of every message, one JSON object per line in `log.jsonl`, in the format of
     `kamerdyner.common.store`; appended to durably, never read on the way to the model. An
-    ephemeral message is archived without its text (`without_ephemeral_text`)."""
+    ephemeral message is archived without its text (`without_ephemeral_text`), and no message
+    with its provider data, which only the model's next requests need."""
 
     def __init__(self, directory: Path) -> None:
         self._path = directory / "log.jsonl"
@@ -49,7 +50,8 @@ class ConversationLog:
 
     def append(self, message: Message) -> None:
         """Once this returns, the message survives a crash."""
-        archived = without_ephemeral_text(message)
+        without_text = without_ephemeral_text(message)
+        archived = dataclasses.replace(without_text, provider_data="")
         record = message_record(archived)
         line = json.dumps(record, ensure_ascii=False)
         with self._path.open("a", encoding="utf-8") as file:
@@ -124,15 +126,17 @@ class Chat:
         first = await self._llm.generate(prompt, TOOLS)
         result, tools_record = await self._finish_tools(prompt, first)
         match result:
-            case Reply(text=reply_text, grounded=grounded):
+            case Reply(text=reply_text, grounded=grounded, provider_data=provider_data):
                 answered_at = self._now()
                 # Search results may be shown and kept for the conversation, not archived or learned
-                # from: a grounded reply is ephemeral.
+                # from: a grounded reply is ephemeral, and what the model thought about them, which
+                # may hold them, is not kept at all.
                 reply = Message(
                     role=Role.MODEL,
                     text=tools_record + reply_text,
                     at=answered_at,
                     ephemeral=grounded,
+                    provider_data="" if grounded else provider_data,
                 )
                 self._log.append(reply)
                 exchange = (*seen, reply)
@@ -174,11 +178,13 @@ class Chat:
             f"Internal error. Tool calls {final.tool_calls} with no tools allowed, "
             f"user {self._user.id}"
         )
-        # What the first turn found on the web went into the answer too.
+        # What the first turn found on the web went into the answer too. Only plain replies keep
+        # their provider data.
         whole = dataclasses.replace(
             final,
             grounded=first.grounded or final.grounded,
             searches=(*first.searches, *final.searches),
+            provider_data="",
         )
         record = tools_record(run.results)
         return whole, record

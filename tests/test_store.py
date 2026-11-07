@@ -74,3 +74,26 @@ def test_a_non_boolean_ephemeral_flag_is_corruption(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="message 0"):
         MessageFile(path)
+
+
+def test_provider_data_is_stored_only_on_the_messages_that_have_it(tmp_path: Path) -> None:
+    plain = make_message(Role.USER, "Привіт")
+    with_data = make_message(Role.MODEL, "Вітаю", minutes=1)
+    with_data = dataclasses.replace(with_data, provider_data="data")
+    path = tmp_path / "latest.json"
+    MessageFile(path).replace([plain, with_data])
+
+    records = json.loads(path.read_text(encoding="utf-8"))["messages"]
+    reopened = MessageFile(path)
+
+    assert ["provider_data" in record for record in records] == [False, True]
+    assert reopened.messages == (plain, with_data)
+
+
+def test_non_text_provider_data_is_corruption(tmp_path: Path) -> None:
+    path = tmp_path / "latest.json"
+    record = {"role": "model", "text": "x", "at": "2026-10-04T14:32:00-04:00", "provider_data": 5}
+    path.write_text(json.dumps({"messages": [record]}), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Corrupted message file"):
+        MessageFile(path)

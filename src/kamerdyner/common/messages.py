@@ -13,12 +13,14 @@ class Message:
     user's local time — the time on their clock when they wrote or read it. `ephemeral`: the text
     may be shown and kept in the recent conversation, but neither archived nor compressed into
     long-term memory (`without_ephemeral_text`) — a reply resting on a web search, whose results
-    may not be kept or learned from."""
+    may not be kept or learned from. `provider_data` is the `Reply.provider_data` of a reply, kept
+    for the model's next requests only: it is not archived."""
 
     role: Role
     text: str
     at: datetime
     ephemeral: bool = False
+    provider_data: str = ""
 
     def __post_init__(self) -> None:
         if self.at.utcoffset() is None:

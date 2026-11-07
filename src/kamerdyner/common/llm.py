@@ -18,10 +18,12 @@ class Role(enum.Enum):
 
 @dataclass(frozen=True)
 class Turn:
-    """One turn of the dialogue as the model sees it: the text already rendered for the model."""
+    """One turn of the dialogue as the model sees it: the text already rendered for the model.
+    `provider_data` is the `Reply.provider_data` of this turn, empty when there is none."""
 
     role: Role
     text: str
+    provider_data: str = ""
 
 
 @dataclass(frozen=True)
@@ -84,12 +86,17 @@ class Reply:
     the provider's terms may require showing with the answer.
 
     With `tool_calls`, the model is not done: it waits for their results, and `text` (possibly
-    empty) is not the answer."""
+    empty) is not the answer.
+
+    `provider_data` is the provider's own addition to this turn, unread outside its module: given
+    back in `Turn.provider_data` next to the text, it lets the model continue from what it thought
+    here. It belongs to the provider that wrote it; empty means there is none."""
 
     text: str
     grounded: bool = False
     searches: tuple[WebSearch, ...] = ()
     tool_calls: tuple[ToolCall, ...] = ()
+    provider_data: str = ""
 
 
 @dataclass(frozen=True)

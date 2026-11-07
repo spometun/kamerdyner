@@ -1,5 +1,6 @@
 """The mapping from SDK responses to results, tested directly, without a network call."""
 
+import base64
 import logging
 
 import pytest
@@ -8,14 +9,20 @@ from google.genai import types
 from kamerdyner.common.llm import (
     Incomplete,
     Reply,
+    Role,
     ToolCall,
+    Turn,
     Unavailable,
     WebSearch,
 )
 from kamerdyner.llm.gemini import (
+    _contents,  # pyright: ignore[reportPrivateUsage]
     _result,  # pyright: ignore[reportPrivateUsage]
     _without_tool_calls,  # pyright: ignore[reportPrivateUsage]
 )
+
+_SIGNED = base64.b64encode(b"signature").decode("ascii")
+"""The provider data of a reply whose text parts are `_signed`."""
 
 
 def _signed(text: str) -> types.Part:
@@ -38,7 +45,7 @@ def test_full_answer_is_a_reply() -> None:
     part = _signed("Привіт")
     response = _response([part], types.FinishReason.STOP)
 
-    assert _result(response) == Reply("Привіт")
+    assert _result(response) == Reply("Привіт", provider_data=_SIGNED)
 
 
 def test_unsigned_reasoning_before_the_answer_is_dropped_and_logged(
@@ -51,7 +58,7 @@ def test_unsigned_reasoning_before_the_answer_is_dropped_and_logged(
     with caplog.at_level(logging.WARNING):
         result = _result(response)
 
-    assert result == Reply("Зрозумів, Олю!")
+    assert result == Reply("Зрозумів, Олю!", provider_data=_SIGNED)
     assert "The user asks to be called" in caplog.text
 
 
@@ -60,7 +67,7 @@ def test_signed_parts_join_into_one_answer() -> None:
     second = _signed("Олю!")
     response = _response([first, second], types.FinishReason.STOP)
 
-    assert _result(response) == Reply("Зрозумів, Олю!")
+    assert _result(response) == Reply("Зрозумів, Олю!", provider_data=_SIGNED)
 
 
 def test_answer_without_any_signed_part_is_incomplete() -> None:
@@ -141,7 +148,9 @@ def test_an_answer_after_a_search_is_grounded_with_googles_links_to_its_searches
     response = _grounded_response(metadata)
 
     search = WebSearch(query="latest python release", url=_CHIP_URL)
-    assert _result(response) == Reply("Python 3.15.2", grounded=True, searches=(search,))
+    assert _result(response) == Reply(
+        "Python 3.15.2", grounded=True, searches=(search,), provider_data=_SIGNED
+    )
 
 
 def test_searches_without_googles_widget_are_linked_and_logged(
@@ -156,7 +165,9 @@ def test_searches_without_googles_widget_are_linked_and_logged(
     search = WebSearch(
         query="toronto weather", url="https://www.google.com/search?q=toronto+weather"
     )
-    assert result == Reply("Python 3.15.2", grounded=True, searches=(search,))
+    assert result == Reply(
+        "Python 3.15.2", grounded=True, searches=(search,), provider_data=_SIGNED
+    )
     assert "without Google's suggestion links" in caplog.text
 
 
@@ -166,14 +177,14 @@ def test_an_answer_from_a_page_it_read_is_grounded() -> None:
     metadata = types.GroundingMetadata(grounding_chunks=[chunk])
     response = _grounded_response(metadata)
 
-    assert _result(response) == Reply("Python 3.15.2", grounded=True)
+    assert _result(response) == Reply("Python 3.15.2", grounded=True, provider_data=_SIGNED)
 
 
 def test_empty_grounding_metadata_is_not_grounded() -> None:
     metadata = types.GroundingMetadata()
     response = _grounded_response(metadata)
 
-    assert _result(response) == Reply("Python 3.15.2", grounded=False)
+    assert _result(response) == Reply("Python 3.15.2", grounded=False, provider_data=_SIGNED)
 
 
 def _call_part(name: str, zone: str, signature: bytes | None) -> types.Part:
@@ -247,3 +258,25 @@ def test_results_without_tool_calls_pass_where_none_is_allowed() -> None:
 
     assert _without_tool_calls(reply) == reply
     assert _without_tool_calls(unavailable) == unavailable
+
+
+def test_a_reply_carries_the_signature_of_its_last_signed_text_part() -> None:
+    first = types.Part(text="Один ", thought_signature=b"first")
+    last = types.Part(text="два", thought_signature=b"last")
+    response = _response([first, last], types.FinishReason.STOP)
+
+    result = _result(response)
+
+    assert isinstance(result, Reply)
+    assert result.provider_data == base64.b64encode(b"last").decode("ascii")
+
+
+def test_a_turn_with_provider_data_goes_back_signed() -> None:
+    data = base64.b64encode(b"signature").decode("ascii")
+    question = Turn(Role.USER, "Привіт")
+    answer = Turn(Role.MODEL, "Вітаю", provider_data=data)
+
+    contents = _contents((question, answer))
+
+    assert contents[0].parts == [types.Part(text="Привіт")]
+    assert contents[1].parts == [types.Part(text="Вітаю", thought_signature=b"signature")]

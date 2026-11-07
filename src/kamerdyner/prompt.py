@@ -11,7 +11,8 @@ from kamerdyner.users import User
 def build_prompt(user: User, memory: str, messages: Sequence[Message]) -> Prompt:
     """The system instruction carries the stable part (who the user is, what is remembered about
     them) and comes first; the recent messages follow. Each user message is prefixed with its
-    local time, and consecutive messages of one role are merged into one turn.
+    local time, and consecutive messages of one role are merged into one turn, which keeps the
+    provider data of the last of them.
 
     `messages` must end with a user message.
     """
@@ -67,9 +68,10 @@ def _system_instruction(user: User, memory: str) -> str:
 def _turns(messages: Sequence[Message]) -> tuple[Turn, ...]:
     turns: list[Turn] = []
     for role, group in itertools.groupby(messages, key=lambda message: message.role):
-        texts = [_render(message) for message in group]
+        merged = list(group)
+        texts = [_render(message) for message in merged]
         joined = "\n\n".join(texts)
-        turn = Turn(role=role, text=joined)
+        turn = Turn(role=role, text=joined, provider_data=merged[-1].provider_data)
         turns.append(turn)
     return tuple(turns)
 

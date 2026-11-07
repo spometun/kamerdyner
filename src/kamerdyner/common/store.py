@@ -3,7 +3,8 @@
 
 A message is stored as {"role": "user" | "model", "text": "...", "at": "<ISO 8601>"}, the time
 with the user's local offset: "2026-10-04T14:32:00-04:00", plus "ephemeral": true on an ephemeral
-message (absent means false).
+message (absent means false) and "provider_data": "..." on a message that has any (absent means
+empty).
 """
 
 import json
@@ -52,6 +53,8 @@ def message_record(message: Message) -> dict[str, str | bool]:
     }
     if message.ephemeral:
         record["ephemeral"] = True
+    if message.provider_data:
+        record["provider_data"] = message.provider_data
     return record
 
 
@@ -93,13 +96,20 @@ def _message(record: Any, path: Path, index: int) -> Message:
             pass
         case _:
             raise ValueError(f"Corrupted message file {path}: message {index} is {record!r}")
-    # Optional: only ephemeral messages carry it.
+    # Optional: only the messages that have them carry these.
     ephemeral = record.get("ephemeral", False)
-    if not isinstance(ephemeral, bool):
+    provider_data = record.get("provider_data", "")
+    if not isinstance(ephemeral, bool) or not isinstance(provider_data, str):
         raise ValueError(f"Corrupted message file {path}: message {index} is {record!r}")
     try:
         parsed_role = Role(role)
         parsed_at = datetime.fromisoformat(at)
-        return Message(role=parsed_role, text=text, at=parsed_at, ephemeral=ephemeral)
+        return Message(
+            role=parsed_role,
+            text=text,
+            at=parsed_at,
+            ephemeral=ephemeral,
+            provider_data=provider_data,
+        )
     except ValueError as error:
         raise ValueError(f"Corrupted message file {path}: message {index}: {error}") from error
