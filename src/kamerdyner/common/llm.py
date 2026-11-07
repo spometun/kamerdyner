@@ -17,16 +17,6 @@ class Role(enum.Enum):
 
 
 @dataclass(frozen=True)
-class Turn:
-    """One turn of the dialogue as the model sees it: the text already rendered for the model.
-    `provider_data` is the `Reply.provider_data` of this turn, empty when there is none."""
-
-    role: Role
-    text: str
-    provider_data: str = ""
-
-
-@dataclass(frozen=True)
 class ToolSpec:
     """A tool as the model is told about it: `description` is what decides when the model calls
     it, `parameters` the JSON Schema of its arguments."""
@@ -38,36 +28,73 @@ class ToolSpec:
 
 @dataclass(frozen=True)
 class ToolCall:
-    """The model asks to run a tool. The arguments come from the model: untrusted."""
+    """The model asks to run a tool; `id` ties the result to this call. The arguments come from
+    the model: untrusted."""
 
+    id: str
     name: str
     arguments: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """What running `call` came to, in words for the model; a failure is told the same way."""
+
+    call: ToolCall
+    text: str
+
+
+@dataclass(frozen=True)
+class UserTurn:
+    """What the user said, already rendered for the model."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class ModelTurn:
+    """What the model said. `provider_data` is the `ModelReply.provider_data` of this turn, empty
+    when there is none. The tools it asked for here are in the `ToolTurn` that follows."""
+
+    text: str
+    provider_data: str = ""
+
+
+@dataclass(frozen=True)
+class ToolTurn:
+    """What running the calls of the model's turn before it came to: one result per call, in
+    their order."""
+
+    results: tuple[ToolResult, ...]
 
 
 @dataclass(frozen=True)
 class Prompt:
     """A request to the model: the system instruction and the dialogue so far.
 
-    Turns alternate between the user and the model, starting and ending with the user.
+    Model turns alternate with those answering them, of the user or of tools; the dialogue starts
+    and ends with the latter.
     """
 
     system_instruction: str
-    turns: tuple[Turn, ...]
+    turns: tuple[UserTurn | ModelTurn | ToolTurn, ...]
 
     def __post_init__(self) -> None:
         if not self.turns:
             raise ValueError("Invalid input. A prompt needs at least one turn")
-        if self.turns[0].role is not Role.USER or self.turns[-1].role is not Role.USER:
+        by_model = [isinstance(turn, ModelTurn) for turn in self.turns]
+        if by_model[0] or by_model[-1]:
             raise ValueError(
-                f"Invalid input. Prompt turns must start and end with the user, got "
-                f"{self.turns[0].role} ... {self.turns[-1].role}"
+                f"Invalid input. Prompt turns must not start or end with the model, got "
+                f"{type(self.turns[0]).__name__} ... {type(self.turns[-1]).__name__}"
             )
-        count = len(self.turns)
+        count = len(by_model)
         for index in range(1, count):
-            if self.turns[index].role is self.turns[index - 1].role:
+            if by_model[index] == by_model[index - 1]:
                 raise ValueError(
                     f"Invalid input. Prompt turns must alternate, turns {index - 1} and {index} "
-                    f"are both {self.turns[index].role}"
+                    f"are {type(self.turns[index - 1]).__name__} and "
+                    f"{type(self.turns[index]).__name__}"
                 )
 
 
@@ -80,7 +107,7 @@ class WebSearch:
 
 
 @dataclass(frozen=True)
-class Reply:
+class ModelReply:
     """The model answered in full. `grounded`: the answer rests on what the model found on the
     web, by searching or by reading a page it was given; `searches`: the searches it ran, which
     the provider's terms may require showing with the answer.
@@ -89,8 +116,8 @@ class Reply:
     empty) is not the answer.
 
     `provider_data` is the provider's own addition to this turn, unread outside its module: given
-    back in `Turn.provider_data` next to the text, it lets the model continue from what it thought
-    here. It belongs to the provider that wrote it; empty means there is none."""
+    back in `ModelTurn.provider_data` next to the text, it lets the model continue from what it
+    thought here. It belongs to the provider that wrote it; empty means there is none."""
 
     text: str
     grounded: bool = False
@@ -100,13 +127,7 @@ class Reply:
 
 
 @dataclass(frozen=True)
-class LLMError:
-    """The model gave no answer to use. Match it to treat all failures alike, or its subclasses
-    to tell them apart."""
-
-
-@dataclass(frozen=True)
-class Incomplete(LLMError):
+class Incomplete:
     """The model stopped early or answered nothing usable: cut off by the output limit, blocked
     by a safety filter, or an empty answer. `partial_text` is whatever text did arrive."""
 
@@ -115,17 +136,20 @@ class Incomplete(LLMError):
 
 
 @dataclass(frozen=True)
-class Unavailable(LLMError):
+class Unavailable:
     """The model could not be reached or refused the request: network, rate limit, server error."""
 
     detail: str
 
 
-type GenerateResult = Reply | Incomplete | Unavailable
+LLMError = Incomplete | Unavailable
+"""The model gave no answer to use."""
 
 
 class LLM(Protocol):
-    async def generate(self, prompt: Prompt, tools: Sequence[ToolSpec] = ()) -> GenerateResult:
-        """The model's response to `prompt`. It can call only `tools`: without any, a `Reply`
+    async def generate(
+        self, prompt: Prompt, tools: Sequence[ToolSpec] = ()
+    ) -> ModelReply | LLMError:
+        """The model's response to `prompt`. It can call only `tools`: without any, a `ModelReply`
         never has `tool_calls`, and a model that tries anyway comes back as an `LLMError`."""
         ...

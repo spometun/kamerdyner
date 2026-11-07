@@ -7,7 +7,7 @@ import pytest
 from fakes import FakeClock, FakeMemory, make_user
 
 from kamerdyner.chat import Chat, ConversationLog
-from kamerdyner.common.llm import GenerateResult, Prompt, Reply, ToolSpec, Unavailable
+from kamerdyner.common.llm import LLMError, ModelReply, Prompt, ToolSpec, Unavailable
 from kamerdyner.common.store import MessageFile
 from kamerdyner.session import Session
 
@@ -15,12 +15,14 @@ from kamerdyner.session import Session
 class _GatedLLM:
     """Answers with the given results, each only once the test opens the gate."""
 
-    def __init__(self, results: list[GenerateResult]) -> None:
+    def __init__(self, results: list[ModelReply | LLMError]) -> None:
         self._results = results
         self.gate = asyncio.Event()
         self.prompts: list[Prompt] = []
 
-    async def generate(self, prompt: Prompt, tools: Sequence[ToolSpec] = ()) -> GenerateResult:
+    async def generate(
+        self, prompt: Prompt, tools: Sequence[ToolSpec] = ()
+    ) -> ModelReply | LLMError:
         self.prompts.append(prompt)
         await self.gate.wait()
         return self._results.pop(0)
@@ -30,10 +32,10 @@ class _Client:
     """Records what the user is shown: each delivered result and each typing scope."""
 
     def __init__(self) -> None:
-        self.delivered: list[GenerateResult] = []
+        self.delivered: list[ModelReply | LLMError] = []
         self.typing_scopes = 0
 
-    async def deliver(self, result: GenerateResult) -> None:
+    async def deliver(self, result: ModelReply | LLMError) -> None:
         self.delivered.append(result)
 
     @contextlib.asynccontextmanager
@@ -54,7 +56,7 @@ def _session(
 
 
 async def test_messages_arriving_during_a_reply_get_one_reply_together(tmp_path: Path) -> None:
-    llm = _GatedLLM([Reply("Відповідь 1"), Reply("Відповідь 2")])
+    llm = _GatedLLM([ModelReply("Відповідь 1"), ModelReply("Відповідь 2")])
     session, memory = _session(tmp_path, llm)
     client = _Client()
 
@@ -70,13 +72,13 @@ async def test_messages_arriving_during_a_reply_get_one_reply_together(tmp_path:
 
     texts = [message.text for message in memory.conversation]
     assert texts == ["Перше", "Відповідь 1", "Друге", "Третє", "Відповідь 2"]
-    assert client.delivered == [Reply("Відповідь 1"), Reply("Відповідь 2")]
+    assert client.delivered == [ModelReply("Відповідь 1"), ModelReply("Відповідь 2")]
     assert client.typing_scopes == 2
     assert len(llm.prompts) == 2
 
 
 async def test_a_failed_reply_leaves_the_messages_for_the_next_catch_up(tmp_path: Path) -> None:
-    llm = _GatedLLM([Unavailable("503"), Reply("Нарешті")])
+    llm = _GatedLLM([Unavailable("503"), ModelReply("Нарешті")])
     llm.gate.set()
     session, memory = _session(tmp_path, llm)
     client = _Client()
@@ -86,14 +88,14 @@ async def test_a_failed_reply_leaves_the_messages_for_the_next_catch_up(tmp_path
     session.receive("Друге")
     await session.catch_up(client.deliver, client.replying)
 
-    assert client.delivered == [Unavailable("503"), Reply("Нарешті")]
+    assert client.delivered == [Unavailable("503"), ModelReply("Нарешті")]
     texts = [message.text for message in memory.conversation]
     assert texts == ["Перше", "Друге", "Нарешті"]
 
 
 async def test_a_reply_reaching_the_limit_compacts_down_to_keep(tmp_path: Path) -> None:
     # 400 ASCII characters are 100 approximate tokens.
-    llm = _GatedLLM([Reply("коротко"), Reply("x" * 400)])
+    llm = _GatedLLM([ModelReply("коротко"), ModelReply("x" * 400)])
     llm.gate.set()
     session, memory = _session(tmp_path, llm, limit_tokens=100, keep_tokens=40)
     client = _Client()
@@ -108,7 +110,7 @@ async def test_a_reply_reaching_the_limit_compacts_down_to_keep(tmp_path: Path) 
 
 
 async def test_compaction_on_request_waits_for_the_running_reply(tmp_path: Path) -> None:
-    llm = _GatedLLM([Reply("Відповідь")])
+    llm = _GatedLLM([ModelReply("Відповідь")])
     session, memory = _session(tmp_path, llm)
     client = _Client()
 

@@ -6,10 +6,10 @@ from contextlib import AbstractAsyncContextManager
 from typing import assert_never
 
 from kamerdyner.chat import Chat
-from kamerdyner.common.llm import GenerateResult, LLMError, Reply
+from kamerdyner.common.llm import Incomplete, LLMError, ModelReply, Unavailable
 from kamerdyner.memory.memory import CompactionOutcome
 
-type Deliver = Callable[[GenerateResult], Awaitable[None]]
+type Deliver = Callable[[ModelReply | LLMError], Awaitable[None]]
 """Shows the user the outcome of a reply."""
 
 type Replying = Callable[[], AbstractAsyncContextManager[None]]
@@ -53,10 +53,10 @@ class Session:
                     result = await self._chat.reply()
                 await deliver(result)
                 match result:
-                    case Reply():
+                    case ModelReply():
                         if self._chat.conversation_tokens >= self._limit_tokens:
                             await self._chat.compact(self._keep_tokens)
-                    case LLMError():
+                    case Incomplete() | Unavailable():
                         return
                     case _:
                         assert_never(result)

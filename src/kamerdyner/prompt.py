@@ -3,7 +3,7 @@
 import itertools
 from collections.abc import Sequence
 
-from kamerdyner.common.llm import Prompt, Role, Turn
+from kamerdyner.common.llm import ModelTurn, Prompt, Role, UserTurn
 from kamerdyner.common.messages import Message, format_time_with_offset
 from kamerdyner.users import User
 
@@ -65,13 +65,17 @@ def _system_instruction(user: User, memory: str) -> str:
     return instruction + memory_section
 
 
-def _turns(messages: Sequence[Message]) -> tuple[Turn, ...]:
-    turns: list[Turn] = []
+def _turns(messages: Sequence[Message]) -> tuple[UserTurn | ModelTurn, ...]:
+    turns: list[UserTurn | ModelTurn] = []
     for role, group in itertools.groupby(messages, key=lambda message: message.role):
         merged = list(group)
         texts = [_render(message) for message in merged]
         joined = "\n\n".join(texts)
-        turn = Turn(role=role, text=joined, provider_data=merged[-1].provider_data)
+        match role:
+            case Role.USER:
+                turn = UserTurn(text=joined)
+            case Role.MODEL:
+                turn = ModelTurn(text=joined, provider_data=merged[-1].provider_data)
         turns.append(turn)
     return tuple(turns)
 

@@ -4,19 +4,22 @@ from datetime import timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fakes import START, FakeClock, FakeMemory, ScriptedLLM, make_message, make_user
+from fakes import START, FakeClock, FakeMemory, ScriptedLLM, make_message, make_user, plain_turn
 
 from kamerdyner.chat import Chat, ConversationLog
 from kamerdyner.common.llm import (
-    GenerateResult,
     Incomplete,
+    LLMError,
+    ModelReply,
+    ModelTurn,
     Prompt,
-    Reply,
     Role,
     ToolCall,
+    ToolResult,
     ToolSpec,
-    Turn,
+    ToolTurn,
     Unavailable,
+    UserTurn,
     WebSearch,
 )
 from kamerdyner.common.messages import Message
@@ -29,7 +32,7 @@ class _Setup:
     def __init__(
         self,
         directory: Path,
-        results: list[GenerateResult],
+        results: list[ModelReply | LLMError],
         remembered: Sequence[Message] = (),
     ) -> None:
         self.directory = directory
@@ -44,7 +47,7 @@ class _Setup:
         user = make_user()
         return Chat(user, self.directory, self.log, self.pending, self.memory, self.llm, self.clock)
 
-    async def send(self, text: str) -> GenerateResult:
+    async def send(self, text: str) -> ModelReply | LLMError:
         self.chat.receive(text)
         return await self.chat.reply()
 
@@ -60,23 +63,23 @@ class _Setup:
 
 
 async def test_reply_goes_to_memory_with_the_message(tmp_path: Path) -> None:
-    setup = _Setup(tmp_path, [Reply("Привіт, Марто!")])
+    setup = _Setup(tmp_path, [ModelReply("Привіт, Марто!")])
 
     result = await setup.send("Привіт")
 
-    assert result == Reply("Привіт, Марто!")
+    assert result == ModelReply("Привіт, Марто!")
     stored = [(message.role, message.text) for message in setup.memory.conversation]
     assert stored == [(Role.USER, "Привіт"), (Role.MODEL, "Привіт, Марто!")]
     assert setup.pending_texts() == []
     assert not setup.chat.awaiting_reply
     assert setup.logged_texts() == ["Привіт", "Привіт, Марто!"]
     prompt = setup.llm.prompts[0]
-    assert prompt.turns[-1].text == "[2026-10-04 Sun 14:32 UTC-04:00] Привіт"
+    assert plain_turn(prompt.turns[-1]).text == "[2026-10-04 Sun 14:32 UTC-04:00] Привіт"
     assert "Любить каву без цукру." in prompt.system_instruction
 
 
 async def test_messages_carry_the_users_local_time(tmp_path: Path) -> None:
-    setup = _Setup(tmp_path, [Reply("Ось")])
+    setup = _Setup(tmp_path, [ModelReply("Ось")])
 
     await setup.send("Котра година?")
 
@@ -100,7 +103,9 @@ async def test_message_is_on_disk_before_the_model_is_called(tmp_path: Path) -> 
 
 
 async def test_failed_reply_keeps_the_message_and_the_next_one_joins_it(tmp_path: Path) -> None:
-    setup = _Setup(tmp_path, [Unavailable("503"), Incomplete("MAX_TOKENS", "Пів"), Reply("Ось")])
+    setup = _Setup(
+        tmp_path, [Unavailable("503"), Incomplete("MAX_TOKENS", "Пів"), ModelReply("Ось")]
+    )
 
     unavailable = await setup.send("Перше")
     setup.clock.advance(1)
@@ -114,8 +119,8 @@ async def test_failed_reply_keeps_the_message_and_the_next_one_joins_it(tmp_path
     assert setup.pending_texts() == []
     last_prompt = setup.llm.prompts[-1]
     assert len(last_prompt.turns) == 1
-    assert "Перше" in last_prompt.turns[0].text
-    assert "Третє" in last_prompt.turns[0].text
+    assert "Перше" in plain_turn(last_prompt.turns[0]).text
+    assert "Третє" in plain_turn(last_prompt.turns[0]).text
 
 
 async def test_model_sees_memorys_conversation_then_the_waiting_messages(tmp_path: Path) -> None:
@@ -123,14 +128,14 @@ async def test_model_sees_memorys_conversation_then_the_waiting_messages(tmp_pat
         make_message(Role.USER, "Як справи?", minutes=-60),
         make_message(Role.MODEL, "Добре.", minutes=-59),
     ]
-    setup = _Setup(tmp_path, [Reply("Ось")], remembered=earlier)
+    setup = _Setup(tmp_path, [ModelReply("Ось")], remembered=earlier)
 
     await setup.send("А в тебе?")
 
     assert setup.llm.prompts[0].turns == (
-        Turn(Role.USER, "[2026-10-04 Sun 13:32 UTC-04:00] Як справи?"),
-        Turn(Role.MODEL, "Добре."),
-        Turn(Role.USER, "[2026-10-04 Sun 14:32 UTC-04:00] А в тебе?"),
+        UserTurn("[2026-10-04 Sun 13:32 UTC-04:00] Як справи?"),
+        ModelTurn("Добре."),
+        UserTurn("[2026-10-04 Sun 14:32 UTC-04:00] А в тебе?"),
     )
 
 
@@ -143,12 +148,14 @@ class _MidwayLLM:
         self._meanwhile = meanwhile
         self.prompts: list[Prompt] = []
 
-    async def generate(self, prompt: Prompt, tools: Sequence[ToolSpec] = ()) -> GenerateResult:
+    async def generate(
+        self, prompt: Prompt, tools: Sequence[ToolSpec] = ()
+    ) -> ModelReply | LLMError:
         self.prompts.append(prompt)
         if len(self.prompts) == 1:
             self._meanwhile()
         text = self._texts.pop(0)
-        return Reply(text)
+        return ModelReply(text)
 
 
 async def test_a_message_arriving_during_a_reply_is_answered_next(tmp_path: Path) -> None:
@@ -170,7 +177,7 @@ async def test_a_message_arriving_during_a_reply_is_answered_next(tmp_path: Path
     assert not chat.awaiting_reply
     texts = [message.text for message in memory.conversation]
     assert texts == ["Перше", "Відповідь 1", "Друге", "Відповідь 2"]
-    assert "Друге" in llm.prompts[1].turns[-1].text
+    assert "Друге" in plain_turn(llm.prompts[1].turns[-1]).text
 
 
 async def test_waiting_messages_already_in_memory_are_dropped_on_start(tmp_path: Path) -> None:
@@ -238,7 +245,7 @@ def test_log_drops_a_torn_last_line(tmp_path: Path) -> None:
 async def test_a_grounded_reply_is_remembered_whole_but_archived_without_its_text(
     tmp_path: Path,
 ) -> None:
-    setup = _Setup(tmp_path, [Reply("Python 3.15.2", grounded=True)])
+    setup = _Setup(tmp_path, [ModelReply("Python 3.15.2", grounded=True)])
 
     await setup.send("Яка остання версія Python?")
 
@@ -250,11 +257,17 @@ async def test_a_grounded_reply_is_remembered_whole_but_archived_without_its_tex
 
 
 def _set_timezone_call(zone: object) -> ToolCall:
-    return ToolCall("set_timezone", {"zone": zone})
+    return ToolCall(f"id-{zone}", "set_timezone", {"zone": zone})
 
 
-def _asks_for(*calls: ToolCall, grounded: bool = False) -> Reply:
-    return Reply("", grounded=grounded, tool_calls=calls)
+def _asks_for(*calls: ToolCall, grounded: bool = False) -> ModelReply:
+    return ModelReply("", grounded=grounded, tool_calls=calls)
+
+
+def _result_texts(setup: _Setup) -> list[str]:
+    turn = setup.llm.prompts[1].turns[-1]
+    assert isinstance(turn, ToolTurn), f"The model got no tool results: {turn!r}"
+    return [result.text for result in turn.results]
 
 
 def _with_user_file(setup: _Setup) -> None:
@@ -263,7 +276,7 @@ def _with_user_file(setup: _Setup) -> None:
 
 
 async def test_a_reply_without_tool_calls_takes_one_request(tmp_path: Path) -> None:
-    setup = _Setup(tmp_path, [Reply("Привіт")])
+    setup = _Setup(tmp_path, [ModelReply("Привіт")])
 
     await setup.send("Привіт")
 
@@ -276,23 +289,23 @@ async def test_a_tool_call_runs_and_the_model_answers_with_no_tools_allowed(
     tmp_path: Path,
 ) -> None:
     call = _set_timezone_call("Europe/Kyiv")
-    setup = _Setup(tmp_path, [_asks_for(call), Reply("Записала, тепер Київ")])
+    setup = _Setup(tmp_path, [_asks_for(call), ModelReply("Записала, тепер Київ")])
     _with_user_file(setup)
 
     result = await setup.send("Я тепер у Києві")
 
-    assert result == Reply("Записала, тепер Київ")
+    assert result == ModelReply("Записала, тепер Київ")
     assert setup.llm.tools[1] == ()
     stamp = "2026-10-04 Sun 21:32 UTC+03:00"
     text = f"Time zone set to Europe/Kyiv. Local time is now {stamp}."
-    asked = Turn(Role.MODEL, 'Model requested tool set_timezone(zone="Europe/Kyiv").')
-    told = Turn(Role.USER, f"The system ran it, result: {text}")
+    asked = ModelTurn("")
+    told = ToolTurn((ToolResult(call, text),))
     assert setup.llm.prompts[1].turns == (*setup.llm.prompts[0].turns, asked, told)
 
 
 async def test_the_new_zone_is_saved_and_applies_from_the_reply_on(tmp_path: Path) -> None:
     call = _set_timezone_call("Europe/Kyiv")
-    setup = _Setup(tmp_path, [_asks_for(call), Reply("Ось"), Reply("Ще")])
+    setup = _Setup(tmp_path, [_asks_for(call), ModelReply("Ось"), ModelReply("Ще")])
     _with_user_file(setup)
 
     await setup.send("Я тепер у Києві")
@@ -310,12 +323,12 @@ async def test_tools_are_recorded_before_the_answer_but_the_client_gets_the_answ
 ) -> None:
     good = _set_timezone_call("Europe/Kyiv")
     bad = _set_timezone_call("Mars/Base")
-    setup = _Setup(tmp_path, [_asks_for(good, bad), Reply("Готово")])
+    setup = _Setup(tmp_path, [_asks_for(good, bad), ModelReply("Готово")])
     _with_user_file(setup)
 
     result = await setup.send("Постав")
 
-    assert result == Reply("Готово")
+    assert result == ModelReply("Готово")
     assert setup.memory_texts()[-1] == (
         'Model requested tool set_timezone(zone="Europe/Kyiv").\n'
         "The system ran it, result: Time zone set to Europe/Kyiv. "
@@ -330,36 +343,39 @@ async def test_tools_are_recorded_before_the_answer_but_the_client_gets_the_answ
 
 
 async def test_an_unknown_zone_is_told_to_the_model_and_changes_nothing(tmp_path: Path) -> None:
-    setup = _Setup(tmp_path, [_asks_for(_set_timezone_call("Mars/Base")), Reply("Не знаю такого")])
+    setup = _Setup(
+        tmp_path, [_asks_for(_set_timezone_call("Mars/Base")), ModelReply("Не знаю такого")]
+    )
     _with_user_file(setup)
 
     await setup.send("Я на Марсі")
 
-    assert 'Error: unknown time zone "Mars/Base"' in setup.llm.prompts[1].turns[-1].text
+    [text] = _result_texts(setup)
+    assert text.startswith('Error: unknown time zone "Mars/Base"')
     assert load_user(tmp_path).timezone == ZoneInfo("America/Toronto")
     assert setup.memory.conversation[-1].at.isoformat() == "2026-10-04T14:32:00-04:00"
 
 
 async def test_calls_out_of_contract_are_told_to_the_model(tmp_path: Path) -> None:
-    unknown = ToolCall("delete_everything", {})
+    unknown = ToolCall("id-1", "delete_everything", {})
     not_a_string = _set_timezone_call(5)
-    missing = ToolCall("set_timezone", {})
-    setup = _Setup(tmp_path, [_asks_for(unknown, not_a_string, missing), Reply("Ось")])
+    missing = ToolCall("id-2", "set_timezone", {})
+    setup = _Setup(tmp_path, [_asks_for(unknown, not_a_string, missing), ModelReply("Ось")])
 
     await setup.send("Постав")
 
-    assert setup.llm.prompts[1].turns[-1].text == (
-        "The system ran it, result: Error: no tool delete_everything taking arguments {}.\n"
-        "The system ran it, result: Error: no tool set_timezone taking arguments {'zone': 5}.\n"
-        "The system ran it, result: Error: no tool set_timezone taking arguments {}."
-    )
+    assert _result_texts(setup) == [
+        "Error: no tool delete_everything taking arguments {}.",
+        "Error: no tool set_timezone taking arguments {'zone': 5}.",
+        "Error: no tool set_timezone taking arguments {}.",
+    ]
 
 
 async def test_when_the_answer_after_tools_fails_the_message_keeps_waiting(tmp_path: Path) -> None:
     call = _set_timezone_call("Europe/Kyiv")
     setup = _Setup(
         tmp_path,
-        [_asks_for(call), Unavailable("503"), _asks_for(call), Reply("Записала")],
+        [_asks_for(call), Unavailable("503"), _asks_for(call), ModelReply("Записала")],
     )
     _with_user_file(setup)
 
@@ -370,43 +386,43 @@ async def test_when_the_answer_after_tools_fails_the_message_keeps_waiting(tmp_p
     assert setup.memory_texts() == []
     assert load_user(tmp_path).timezone == ZoneInfo("Europe/Kyiv")
     result = await setup.chat.reply()
-    assert result == Reply("Записала")
+    assert result == ModelReply("Записала")
     assert setup.pending_texts() == []
 
 
 async def test_what_the_first_turn_found_on_the_web_counts_for_the_answer(tmp_path: Path) -> None:
     search = WebSearch("погода Київ", "https://example.com/search")
-    first = Reply(
+    first = ModelReply(
         "",
         grounded=True,
         searches=(search,),
         tool_calls=(_set_timezone_call("Europe/Kyiv"),),
     )
-    setup = _Setup(tmp_path, [first, Reply("У Києві +5")])
+    setup = _Setup(tmp_path, [first, ModelReply("У Києві +5")])
     _with_user_file(setup)
 
     result = await setup.send("Постав пояс і знайди погоду")
 
-    assert result == Reply("У Києві +5", grounded=True, searches=(search,))
+    assert result == ModelReply("У Києві +5", grounded=True, searches=(search,))
     assert setup.memory.conversation[-1].ephemeral
 
 
 async def test_a_reply_keeps_its_provider_data_for_the_next_request_not_for_the_archive(
     tmp_path: Path,
 ) -> None:
-    setup = _Setup(tmp_path, [Reply("Вітаю", provider_data="thoughts"), Reply("Ось")])
+    setup = _Setup(tmp_path, [ModelReply("Вітаю", provider_data="thoughts"), ModelReply("Ось")])
 
     await setup.send("Привіт")
     await setup.send("Далі")
 
     assert setup.memory.conversation[1].provider_data == "thoughts"
-    assert setup.llm.prompts[1].turns[1].provider_data == "thoughts"
+    assert setup.llm.prompts[1].turns[1] == ModelTurn("Вітаю", provider_data="thoughts")
     log = (tmp_path / "log.jsonl").read_text(encoding="utf-8")
     assert "thoughts" not in log
 
 
 async def test_a_grounded_reply_keeps_no_provider_data(tmp_path: Path) -> None:
-    setup = _Setup(tmp_path, [Reply("У Києві +5", grounded=True, provider_data="thoughts")])
+    setup = _Setup(tmp_path, [ModelReply("У Києві +5", grounded=True, provider_data="thoughts")])
 
     await setup.send("Яка погода?")
 
@@ -415,7 +431,7 @@ async def test_a_grounded_reply_keeps_no_provider_data(tmp_path: Path) -> None:
 
 async def test_a_reply_after_tools_keeps_no_provider_data(tmp_path: Path) -> None:
     call = _set_timezone_call("Europe/Kyiv")
-    setup = _Setup(tmp_path, [_asks_for(call), Reply("Готово", provider_data="thoughts")])
+    setup = _Setup(tmp_path, [_asks_for(call), ModelReply("Готово", provider_data="thoughts")])
     _with_user_file(setup)
 
     await setup.send("Я тепер у Києві")

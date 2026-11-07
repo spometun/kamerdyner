@@ -8,11 +8,11 @@ model itself. Their length follows the substance of the conversation; nothing ca
 
 from collections.abc import Sequence
 
-from kamerdyner.common.llm import LLM, GenerateResult, Prompt, Role, Turn
+from kamerdyner.common.llm import LLM, LLMError, ModelReply, Prompt, Role, UserTurn
 from kamerdyner.common.messages import Message, format_time_with_offset
 
 
-async def summarize(llm: LLM, name: str, messages: Sequence[Message]) -> GenerateResult:
+async def summarize(llm: LLM, name: str, messages: Sequence[Message]) -> ModelReply | LLMError:
     """Asks the model for notes on `messages` of the user called `name`; a full reply carries
     them as its text.
 
@@ -22,7 +22,7 @@ async def summarize(llm: LLM, name: str, messages: Sequence[Message]) -> Generat
         raise ValueError(f"Invalid input. Nothing to summarize for {name!r}")
     instruction = _INSTRUCTION.format(name=name)
     conversation = transcript(name, messages)
-    turn = Turn(role=Role.USER, text=conversation)
+    turn = UserTurn(text=conversation)
     prompt = Prompt(system_instruction=instruction, turns=(turn,))
     return await llm.generate(prompt)
 

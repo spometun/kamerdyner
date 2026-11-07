@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from fakes import ScriptedLLM, make_message
 
-from kamerdyner.common.llm import Reply, Role, Turn
+from kamerdyner.common.llm import ModelReply, Role, UserTurn
 from kamerdyner.common.messages import Message
 from kamerdyner.memory.impl.summary import span_heading, summarize, transcript
 
@@ -53,14 +53,14 @@ async def test_summarize_sends_the_transcript_and_returns_the_reply() -> None:
         make_message(Role.USER, "Привіт", minutes=0),
         make_message(Role.MODEL, "Привіт, Марто!", minutes=1),
     ]
-    llm = ScriptedLLM([Reply("- Марта привіталася.")])
+    llm = ScriptedLLM([ModelReply("- Марта привіталася.")])
 
     result = await summarize(llm, "Марта", messages)
 
-    assert result == Reply("- Марта привіталася.")
+    assert result == ModelReply("- Марта привіталася.")
     [prompt] = llm.prompts
     conversation = transcript("Марта", messages)
-    assert prompt.turns == (Turn(Role.USER, conversation),)
+    assert prompt.turns == (UserTurn(conversation),)
     assert "Марта" in prompt.system_instruction
 
 

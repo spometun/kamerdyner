@@ -12,15 +12,17 @@ from google import genai
 from google.genai import errors, types
 
 from kamerdyner.common.llm import (
-    GenerateResult,
     Incomplete,
     LLMError,
+    ModelReply,
+    ModelTurn,
     Prompt,
-    Reply,
     ToolCall,
+    ToolResult,
     ToolSpec,
-    Turn,
+    ToolTurn,
     Unavailable,
+    UserTurn,
     WebSearch,
 )
 
@@ -34,8 +36,9 @@ class GeminiLLM:
     it decides to; such a reply is `grounded`. Retries of transient failures (429, 5xx, timeouts)
     are configured on the client; what still fails comes back as a value.
 
-    Provider data is the thought signature of the reply's text in base64: sent back on the text,
-    it brings what the model thought in that turn into the request."""
+    Provider data is the thought signature of a turn in base64: sent back on the turn's text or
+    on its first tool call, it brings what the model thought in that turn into the request. The
+    API refuses a tool call without it."""
 
     def __init__(
         self,
@@ -51,7 +54,9 @@ class GeminiLLM:
         self._seed = seed
         self._web_tools = _web_tools() if web else []
 
-    async def generate(self, prompt: Prompt, tools: Sequence[ToolSpec] = ()) -> GenerateResult:
+    async def generate(
+        self, prompt: Prompt, tools: Sequence[ToolSpec] = ()
+    ) -> ModelReply | LLMError:
         contents = _contents(prompt.turns)
         thinking = types.ThinkingConfig(thinking_level=self._thinking_level)
         # Tool calls are run by us, not by the SDK.
@@ -90,14 +95,53 @@ def make_client(api_key: str, timeout_seconds: int, attempts: int) -> genai.Clie
     return genai.Client(api_key=api_key, http_options=options)
 
 
-def _contents(turns: Sequence[Turn]) -> list[types.Content]:
+def _contents(turns: Sequence[UserTurn | ModelTurn | ToolTurn]) -> list[types.Content]:
     contents: list[types.Content] = []
-    for turn in turns:
-        signature = _decoded_signature(turn.provider_data)
-        part = types.Part(text=turn.text, thought_signature=signature)
-        content = types.Content(role=turn.role.value, parts=[part])
+    following = (*turns[1:], None)
+    for turn, after in zip(turns, following, strict=True):
+        match turn:
+            case UserTurn(text=text):
+                part = types.Part(text=text)
+                content = types.Content(role="user", parts=[part])
+            case ModelTurn():
+                # The API wants a tool call in the model's turn, the turn before its result.
+                calls = (
+                    [result.call for result in after.results] if isinstance(after, ToolTurn) else []
+                )
+                parts = _model_parts(turn, calls)
+                content = types.Content(role="model", parts=parts)
+            case ToolTurn(results=results):
+                parts = _result_parts(results)
+                content = types.Content(role="user", parts=parts)
         contents.append(content)
     return contents
+
+
+def _model_parts(turn: ModelTurn, calls: Sequence[ToolCall]) -> list[types.Part]:
+    signature = _decoded_signature(turn.provider_data)
+    if not calls:
+        return [types.Part(text=turn.text, thought_signature=signature)]
+    parts = [types.Part(text=turn.text)] if turn.text else []
+    for call in calls:
+        arguments = dict(call.arguments)
+        function_call = types.FunctionCall(id=call.id, name=call.name, args=arguments)
+        # Of parallel calls, only the first is signed.
+        part = types.Part(function_call=function_call, thought_signature=signature)
+        parts.append(part)
+        signature = None
+    return parts
+
+
+def _result_parts(results: Sequence[ToolResult]) -> list[types.Part]:
+    parts: list[types.Part] = []
+    for result in results:
+        call = result.call
+        response = types.FunctionResponse(
+            id=call.id, name=call.name, response={"result": result.text}
+        )
+        part = types.Part(function_response=response)
+        parts.append(part)
+    return parts
 
 
 def _decoded_signature(provider_data: str) -> bytes | None:
@@ -105,12 +149,15 @@ def _decoded_signature(provider_data: str) -> bytes | None:
 
 
 def _encoded_signature(candidate: types.Candidate) -> str:
-    """The signature of the last signed text part, the one that closes the answer; empty when
-    there is none. The text of a turn goes back as one part, so one signature goes with it."""
-    signature = b""
-    for part in _content_parts(candidate.content):
-        if part.text is not None and part.thought_signature is not None:
-            signature = part.thought_signature
+    """The signature that goes back with the turn: of its first tool call or, without calls, of
+    its last signed text part, the one that closes the answer; empty when there is none. A turn
+    goes back as its text and calls, so one signature goes with it."""
+    parts = _content_parts(candidate.content)
+    calls = [part for part in parts if part.function_call is not None]
+    texts = [part for part in parts if part.text is not None]
+    carriers = calls[:1] if calls else texts
+    signatures = [part.thought_signature for part in carriers if part.thought_signature is not None]
+    signature = signatures[-1] if signatures else b""
     encoded = base64.b64encode(signature)
     return encoded.decode("ascii")
 
@@ -127,7 +174,7 @@ def _function_tools(specs: Sequence[ToolSpec]) -> list[types.Tool]:
     return [types.Tool(function_declarations=declarations)] if declarations else []
 
 
-def _result(response: types.GenerateContentResponse) -> GenerateResult:
+def _result(response: types.GenerateContentResponse) -> ModelReply | LLMError:
     if not response.candidates:
         feedback = response.prompt_feedback
         block_reason = None if feedback is None else feedback.block_reason
@@ -142,7 +189,7 @@ def _result(response: types.GenerateContentResponse) -> GenerateResult:
         grounded = _grounded(candidate)
         searches = _searches(candidate)
         provider_data = _encoded_signature(candidate)
-        return Reply(
+        return ModelReply(
             text=text,
             grounded=grounded,
             searches=searches,
@@ -152,7 +199,7 @@ def _result(response: types.GenerateContentResponse) -> GenerateResult:
     return Incomplete(reason=f"finish reason {finish_reason}, {len(text)} chars", partial_text=text)
 
 
-def _without_tool_calls(result: GenerateResult) -> GenerateResult:
+def _without_tool_calls(result: ModelReply | LLMError) -> ModelReply | LLMError:
     """`result` of a request that allowed no tools; a model calling one anyway is an error."""
     if isinstance(result, LLMError) or not result.tool_calls:
         return result
@@ -174,9 +221,11 @@ def _tool_calls(candidate: types.Candidate) -> tuple[ToolCall, ...]:
             continue
         name = function_call.name
         assert name is not None, f"Unexpected Gemini function call without a name: {part!r}"
+        call_id = function_call.id
+        assert call_id is not None, f"Unexpected Gemini function call without an id: {part!r}"
         # A call without arguments may come without them altogether.
         arguments = {} if function_call.args is None else function_call.args
-        call = ToolCall(name=name, arguments=arguments)
+        call = ToolCall(id=call_id, name=name, arguments=arguments)
         calls.append(call)
     return tuple(calls)
 

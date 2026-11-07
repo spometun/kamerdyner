@@ -26,7 +26,7 @@ from google.genai import types
 
 from kamerdyner.apps.terminal import TypeAhead
 from kamerdyner.chat import Chat, ConversationLog, utc_now
-from kamerdyner.common.llm import GenerateResult, Incomplete, Reply, Unavailable
+from kamerdyner.common.llm import Incomplete, LLMError, ModelReply, Unavailable
 from kamerdyner.common.store import MessageFile
 from kamerdyner.llm.gemini import GeminiLLM, make_client
 from kamerdyner.memory.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
@@ -160,10 +160,10 @@ def _required_env(parser: argparse.ArgumentParser, name: str) -> str:
     return value
 
 
-def _show(result: GenerateResult, tokens: int) -> None:
+def _show(result: ModelReply | LLMError, tokens: int) -> None:
     """Prints the reply, opening with the size of the recent conversation in memory."""
     match result:
-        case Reply(text=text):
+        case ModelReply(text=text):
             print(f"\n[{tokens}] {text}")
         case Incomplete(reason=reason, partial_text=partial_text):
             print(f"\n[{tokens}] {partial_text}\n[the reply was cut short: {reason}]")

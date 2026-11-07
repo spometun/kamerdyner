@@ -23,7 +23,7 @@ from kamerdyner.apps.telegram.impl.formatting import (
     to_telegram_html,
 )
 from kamerdyner.chat import Chat, ConversationLog, utc_now
-from kamerdyner.common.llm import LLM, GenerateResult, Incomplete, LLMError, Reply, Unavailable
+from kamerdyner.common.llm import LLM, Incomplete, LLMError, ModelReply, Unavailable
 from kamerdyner.common.store import MessageFile
 from kamerdyner.memory.memory import Compacted, CompactionOutcome, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory
@@ -212,7 +212,7 @@ async def _answer_waiting(bot: Bot, telegram_id: int, member: _Member) -> None:
 
 
 async def _catch_up(bot: Bot, chat_id: int, member: _Member) -> None:
-    async def deliver(result: GenerateResult) -> None:
+    async def deliver(result: ModelReply | LLMError) -> None:
         text = _reply_text(result)
         keyboard = _reply_keyboard(result)
         await _send_markdown(bot, chat_id, text, keyboard)
@@ -220,19 +220,19 @@ async def _catch_up(bot: Bot, chat_id: int, member: _Member) -> None:
     await member.session.catch_up(deliver, lambda: _typing(bot, chat_id))
 
 
-def _reply_keyboard(result: GenerateResult) -> InlineKeyboardMarkup | None:
+def _reply_keyboard(result: ModelReply | LLMError) -> InlineKeyboardMarkup | None:
     match result:
-        case Reply(searches=searches):
+        case ModelReply(searches=searches):
             return search_keyboard(searches)
-        case LLMError():
+        case Incomplete() | Unavailable():
             return None
         case _:
             assert_never(result)
 
 
-def _reply_text(result: GenerateResult) -> str:
+def _reply_text(result: ModelReply | LLMError) -> str:
     match result:
-        case Reply(text=text):
+        case ModelReply(text=text):
             return text
         case Incomplete(partial_text=partial_text):
             notice = "[відповідь обірвалася — напиши ще щось, і я відповім знову]"

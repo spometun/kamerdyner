@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import assert_never
 
-from kamerdyner.common.llm import LLM, Incomplete, Reply, Role, Unavailable
+from kamerdyner.common.llm import LLM, Incomplete, ModelReply, Role, Unavailable
 from kamerdyner.common.messages import Message, format_time, without_ephemeral_text
 from kamerdyner.common.store import MessageFile, write_atomically
 from kamerdyner.memory.impl.compaction import conversation_tokens, split_newest
@@ -92,7 +92,7 @@ class NotesMemory:
         conversation = transcript(self._name, messages)
         result = await summarize(self._llm, self._name, messages)
         match result:
-            case Reply(text=text):
+            case ModelReply(text=text):
                 entry = text.strip()
                 self._store(entry)
                 sections = [("conversation", conversation), ("notes", entry)]

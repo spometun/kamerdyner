@@ -8,11 +8,13 @@ from google.genai import types
 
 from kamerdyner.common.llm import (
     Incomplete,
-    Reply,
-    Role,
+    ModelReply,
+    ModelTurn,
     ToolCall,
-    Turn,
+    ToolResult,
+    ToolTurn,
     Unavailable,
+    UserTurn,
     WebSearch,
 )
 from kamerdyner.llm.gemini import (
@@ -45,7 +47,7 @@ def test_full_answer_is_a_reply() -> None:
     part = _signed("Привіт")
     response = _response([part], types.FinishReason.STOP)
 
-    assert _result(response) == Reply("Привіт", provider_data=_SIGNED)
+    assert _result(response) == ModelReply("Привіт", provider_data=_SIGNED)
 
 
 def test_unsigned_reasoning_before_the_answer_is_dropped_and_logged(
@@ -58,7 +60,7 @@ def test_unsigned_reasoning_before_the_answer_is_dropped_and_logged(
     with caplog.at_level(logging.WARNING):
         result = _result(response)
 
-    assert result == Reply("Зрозумів, Олю!", provider_data=_SIGNED)
+    assert result == ModelReply("Зрозумів, Олю!", provider_data=_SIGNED)
     assert "The user asks to be called" in caplog.text
 
 
@@ -67,7 +69,7 @@ def test_signed_parts_join_into_one_answer() -> None:
     second = _signed("Олю!")
     response = _response([first, second], types.FinishReason.STOP)
 
-    assert _result(response) == Reply("Зрозумів, Олю!", provider_data=_SIGNED)
+    assert _result(response) == ModelReply("Зрозумів, Олю!", provider_data=_SIGNED)
 
 
 def test_answer_without_any_signed_part_is_incomplete() -> None:
@@ -148,7 +150,7 @@ def test_an_answer_after_a_search_is_grounded_with_googles_links_to_its_searches
     response = _grounded_response(metadata)
 
     search = WebSearch(query="latest python release", url=_CHIP_URL)
-    assert _result(response) == Reply(
+    assert _result(response) == ModelReply(
         "Python 3.15.2", grounded=True, searches=(search,), provider_data=_SIGNED
     )
 
@@ -165,7 +167,7 @@ def test_searches_without_googles_widget_are_linked_and_logged(
     search = WebSearch(
         query="toronto weather", url="https://www.google.com/search?q=toronto+weather"
     )
-    assert result == Reply(
+    assert result == ModelReply(
         "Python 3.15.2", grounded=True, searches=(search,), provider_data=_SIGNED
     )
     assert "without Google's suggestion links" in caplog.text
@@ -177,14 +179,14 @@ def test_an_answer_from_a_page_it_read_is_grounded() -> None:
     metadata = types.GroundingMetadata(grounding_chunks=[chunk])
     response = _grounded_response(metadata)
 
-    assert _result(response) == Reply("Python 3.15.2", grounded=True, provider_data=_SIGNED)
+    assert _result(response) == ModelReply("Python 3.15.2", grounded=True, provider_data=_SIGNED)
 
 
 def test_empty_grounding_metadata_is_not_grounded() -> None:
     metadata = types.GroundingMetadata()
     response = _grounded_response(metadata)
 
-    assert _result(response) == Reply("Python 3.15.2", grounded=False, provider_data=_SIGNED)
+    assert _result(response) == ModelReply("Python 3.15.2", grounded=False, provider_data=_SIGNED)
 
 
 def _call_part(name: str, zone: str, signature: bytes | None) -> types.Part:
@@ -198,8 +200,8 @@ def test_a_function_call_is_a_reply_with_tool_calls() -> None:
 
     result = _result(response)
 
-    call = ToolCall("set_timezone", {"zone": "Europe/Kyiv"})
-    assert isinstance(result, Reply)
+    call = ToolCall("id-Europe/Kyiv", "set_timezone", {"zone": "Europe/Kyiv"})
+    assert isinstance(result, ModelReply)
     assert result.text == ""
     assert result.tool_calls == (call,)
 
@@ -214,7 +216,7 @@ def test_only_the_first_of_parallel_calls_needs_a_signature(
     with caplog.at_level(logging.WARNING):
         result = _result(response)
 
-    assert isinstance(result, Reply)
+    assert isinstance(result, ModelReply)
     assert len(result.tool_calls) == 2
     assert caplog.text == ""
 
@@ -233,15 +235,15 @@ def test_a_turn_that_searched_is_grounded_without_metadata() -> None:
 
     result = _result(response)
 
-    assert isinstance(result, Reply)
+    assert isinstance(result, ModelReply)
     assert result.grounded
 
 
 def test_a_tool_call_where_none_is_allowed_is_an_error_and_logged(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    call = ToolCall("set_timezone", {"zone": "Europe/Kyiv"})
-    reply = Reply("Зараз", tool_calls=(call,))
+    call = ToolCall("id-Europe/Kyiv", "set_timezone", {"zone": "Europe/Kyiv"})
+    reply = ModelReply("Зараз", tool_calls=(call,))
 
     with caplog.at_level(logging.WARNING):
         result = _without_tool_calls(reply)
@@ -253,7 +255,7 @@ def test_a_tool_call_where_none_is_allowed_is_an_error_and_logged(
 
 
 def test_results_without_tool_calls_pass_where_none_is_allowed() -> None:
-    reply = Reply("Привіт")
+    reply = ModelReply("Привіт")
     unavailable = Unavailable("503")
 
     assert _without_tool_calls(reply) == reply
@@ -267,16 +269,74 @@ def test_a_reply_carries_the_signature_of_its_last_signed_text_part() -> None:
 
     result = _result(response)
 
-    assert isinstance(result, Reply)
+    assert isinstance(result, ModelReply)
     assert result.provider_data == base64.b64encode(b"last").decode("ascii")
 
 
 def test_a_turn_with_provider_data_goes_back_signed() -> None:
     data = base64.b64encode(b"signature").decode("ascii")
-    question = Turn(Role.USER, "Привіт")
-    answer = Turn(Role.MODEL, "Вітаю", provider_data=data)
+    question = UserTurn("Привіт")
+    answer = ModelTurn("Вітаю", provider_data=data)
 
     contents = _contents((question, answer))
 
     assert contents[0].parts == [types.Part(text="Привіт")]
     assert contents[1].parts == [types.Part(text="Вітаю", thought_signature=b"signature")]
+
+
+def test_the_calls_of_a_tool_turn_go_into_the_model_turn_before_it_first_one_signed() -> None:
+    data = base64.b64encode(b"signature").decode("ascii")
+    kyiv = ToolCall("id-1", "set_timezone", {"zone": "Europe/Kyiv"})
+    warsaw = ToolCall("id-2", "set_timezone", {"zone": "Europe/Warsaw"})
+    asked = ModelTurn("Зараз", provider_data=data)
+    answered = ToolTurn((ToolResult(kyiv, "Done."), ToolResult(warsaw, "Done.")))
+
+    model, tool = _contents((asked, answered))
+
+    assert model.role == "model"
+    assert model.parts is not None
+    [text, first, second] = model.parts
+    assert text == types.Part(text="Зараз")
+    assert first.function_call == types.FunctionCall(
+        id="id-1", name="set_timezone", args={"zone": "Europe/Kyiv"}
+    )
+    assert first.thought_signature == b"signature"
+    assert second.function_call is not None
+    assert second.function_call.id == "id-2"
+    assert second.thought_signature is None
+    assert tool.role == "user"
+
+
+def test_a_model_turn_that_only_called_has_no_text_part() -> None:
+    call = ToolCall("id-1", "set_timezone", {"zone": "Europe/Kyiv"})
+    answered = ToolTurn((ToolResult(call, "Done."),))
+
+    model, _ = _contents((ModelTurn(""), answered))
+
+    assert model.parts is not None
+    assert len(model.parts) == 1
+
+
+def test_a_tool_turn_is_a_response_per_call() -> None:
+    call = ToolCall("id-1", "set_timezone", {"zone": "Europe/Kyiv"})
+    turn = ToolTurn((ToolResult(call, "Done."),))
+
+    [content] = _contents((turn,))
+
+    assert content.role == "user"
+    assert content.parts is not None
+    [part] = content.parts
+    assert part.function_response == types.FunctionResponse(
+        id="id-1", name="set_timezone", response={"result": "Done."}
+    )
+
+
+def test_a_turn_with_calls_keeps_the_signature_of_its_first_call() -> None:
+    first = _call_part("set_timezone", "Europe/Kyiv", b"first")
+    second = _call_part("set_timezone", "Europe/Warsaw", None)
+    response = _response([first, second], types.FinishReason.STOP)
+
+    result = _result(response)
+
+    assert isinstance(result, ModelReply)
+    assert result.provider_data == base64.b64encode(b"first").decode("ascii")

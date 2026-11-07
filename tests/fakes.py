@@ -4,7 +4,16 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from kamerdyner.common.llm import GenerateResult, Prompt, Role, ToolSpec
+from kamerdyner.common.llm import (
+    LLMError,
+    ModelReply,
+    ModelTurn,
+    Prompt,
+    Role,
+    ToolSpec,
+    ToolTurn,
+    UserTurn,
+)
 from kamerdyner.common.messages import Message
 from kamerdyner.memory.impl.compaction import conversation_tokens
 from kamerdyner.memory.memory import CompactionOutcome, NothingToCompact
@@ -18,6 +27,12 @@ START = datetime(2026, 10, 4, 14, 32, tzinfo=TORONTO)
 
 def make_user() -> User:
     return User(id="marta", name="Марта", timezone=TORONTO)
+
+
+def plain_turn(turn: UserTurn | ModelTurn | ToolTurn) -> UserTurn | ModelTurn:
+    """`turn`, which the test expects not to be a `ToolTurn`."""
+    assert not isinstance(turn, ToolTurn), f"Expected a plain turn, got {turn!r}"
+    return turn
 
 
 def make_message(role: Role, text: str, minutes: int = 0) -> Message:
@@ -43,12 +58,14 @@ class ScriptedLLM:
     """Returns the given results in order and records every prompt it receives and the tools it
     was given with it."""
 
-    def __init__(self, results: Sequence[GenerateResult]) -> None:
+    def __init__(self, results: Sequence[ModelReply | LLMError]) -> None:
         self._results = list(results)
         self.prompts: list[Prompt] = []
         self.tools: list[Sequence[ToolSpec]] = []
 
-    async def generate(self, prompt: Prompt, tools: Sequence[ToolSpec] = ()) -> GenerateResult:
+    async def generate(
+        self, prompt: Prompt, tools: Sequence[ToolSpec] = ()
+    ) -> ModelReply | LLMError:
         self.prompts.append(prompt)
         self.tools.append(tools)
         return self._results.pop(0)

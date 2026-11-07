@@ -2,9 +2,9 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-from fakes import ScriptedLLM, make_message
+from fakes import ScriptedLLM, make_message, plain_turn
 
-from kamerdyner.common.llm import GenerateResult, Incomplete, Reply, Role, Unavailable
+from kamerdyner.common.llm import Incomplete, LLMError, ModelReply, Role, Unavailable
 from kamerdyner.common.messages import Message
 from kamerdyner.memory.memory import Compacted, NotAbsorbed, NothingToCompact
 from kamerdyner.memory.notes import NotesMemory
@@ -19,7 +19,9 @@ def _exchange(minutes: int = 0, size: int = 0) -> list[Message]:
     return [question, answer]
 
 
-def _memory(directory: Path, results: list[GenerateResult]) -> tuple[NotesMemory, ScriptedLLM]:
+def _memory(
+    directory: Path, results: list[ModelReply | LLMError]
+) -> tuple[NotesMemory, ScriptedLLM]:
     llm = ScriptedLLM(results)
     memory = NotesMemory(directory, "Марта", llm)
     return memory, llm
@@ -67,7 +69,7 @@ def test_add_rejects_what_is_not_an_exchange(tmp_path: Path, roles: list[Role]) 
 
 async def test_compacted_notes_are_the_content_and_survive_a_restart(tmp_path: Path) -> None:
     notes = f"{_HEADING}\n- Марта 2026-10-05 йде до лікаря; я пообіцяв нагадати зранку."
-    memory, _ = _memory(tmp_path, [Reply(notes + "\n")])
+    memory, _ = _memory(tmp_path, [ModelReply(notes + "\n")])
     exchange = _exchange()
     memory.add(exchange)
 
@@ -87,7 +89,7 @@ async def test_compacted_notes_are_the_content_and_survive_a_restart(tmp_path: P
 
 
 async def test_compact_keeps_the_newest_tokens(tmp_path: Path) -> None:
-    memory, llm = _memory(tmp_path, [Reply(f"{_HEADING}\n- перше")])
+    memory, llm = _memory(tmp_path, [ModelReply(f"{_HEADING}\n- перше")])
     # 400 characters of ASCII padding are about 100 tokens: each exchange weighs about 200.
     first = _exchange(minutes=0, size=400)
     second = _exchange(minutes=60, size=400)
@@ -100,15 +102,15 @@ async def test_compact_keeps_the_newest_tokens(tmp_path: Path) -> None:
     assert outcome == Compacted(moved=2, kept=4)
     assert memory.conversation == (*second, *third)
     [prompt] = llm.prompts
-    assert "14:32" in prompt.turns[0].text
-    assert "15:32" not in prompt.turns[0].text
+    assert "14:32" in plain_turn(prompt.turns[0]).text
+    assert "15:32" not in plain_turn(prompt.turns[0]).text
 
 
 async def test_each_compaction_adds_an_entry_after_the_previous_ones(tmp_path: Path) -> None:
     second_heading = "## [2026-10-04 Sun 15:32 UTC-04:00] — [2026-10-04 Sun 15:33 UTC-04:00]"
     first = f"{_HEADING}\n- перше"
     second = f"{second_heading}\n- друге"
-    memory, _ = _memory(tmp_path, [Reply(first), Reply(second)])
+    memory, _ = _memory(tmp_path, [ModelReply(first), ModelReply(second)])
 
     memory.add(_exchange())
     await memory.compact(0)
@@ -132,7 +134,7 @@ async def test_nothing_to_compact_calls_no_model(tmp_path: Path) -> None:
 
 
 async def test_notes_with_a_wrong_heading_are_kept_with_a_warning(tmp_path: Path) -> None:
-    memory, _ = _memory(tmp_path, [Reply("- без заголовка")])
+    memory, _ = _memory(tmp_path, [ModelReply("- без заголовка")])
     memory.add(_exchange())
 
     outcome = await memory.compact(0)
@@ -175,7 +177,7 @@ async def test_incomplete_notes_are_not_kept_but_journaled(tmp_path: Path) -> No
 async def test_an_ephemeral_reply_reaches_neither_the_notes_model_nor_the_journal(
     tmp_path: Path,
 ) -> None:
-    memory, llm = _memory(tmp_path, [Reply(f"{_HEADING}\n- Марта питала про версію Python.")])
+    memory, llm = _memory(tmp_path, [ModelReply(f"{_HEADING}\n- Марта питала про версію Python.")])
     question = make_message(Role.USER, "Яка остання версія Python?", minutes=0)
     answer = make_message(Role.MODEL, "Python 3.15.2", minutes=1)
     answer = dataclasses.replace(answer, ephemeral=True)
@@ -184,7 +186,7 @@ async def test_an_ephemeral_reply_reaches_neither_the_notes_model_nor_the_journa
     outcome = await memory.compact(0)
 
     assert outcome == Compacted(moved=2, kept=0)
-    sent = llm.prompts[0].turns[0].text
+    sent = plain_turn(llm.prompts[0].turns[0]).text
     assert "Яка остання версія Python?" in sent
     assert "3.15.2" not in sent
     assert "[Kamerdyner answered from a web search" in sent

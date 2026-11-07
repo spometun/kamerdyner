@@ -1,7 +1,7 @@
 """The model's tools: which there are, running what it asked for, and telling it how that went.
 
-Nothing here depends on the provider. The model's next request carries the tool round as plain
-turns, so a provider needs no record of its own of the turn that asked."""
+Nothing here depends on the provider: a tool round is a `ModelTurn` and a `ToolTurn` with the calls
+and their results, which each provider puts into its own form."""
 
 import dataclasses
 import json
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from kamerdyner.common.llm import Prompt, Reply, Role, ToolCall, Turn
+from kamerdyner.common.llm import ModelReply, ModelTurn, Prompt, ToolCall, ToolResult, ToolTurn
 from kamerdyner.tools.impl.outcome import ToolOutcome
 from kamerdyner.tools.impl.set_timezone import SET_TIMEZONE, set_timezone
 from kamerdyner.users import User
@@ -19,14 +19,6 @@ from kamerdyner.users import User
 logger = logging.getLogger(__name__)
 
 TOOLS = (SET_TIMEZONE,)
-
-
-@dataclass(frozen=True)
-class ToolResult:
-    """What running `call` came to, in words for the model; a failure is told the same way."""
-
-    call: ToolCall
-    text: str
 
 
 @dataclass(frozen=True)
@@ -51,15 +43,11 @@ def run_tools(calls: Sequence[ToolCall], user: User, directory: Path, now: datet
     return ToolsRun(results=tuple(results), user=user)
 
 
-def with_tool_results(prompt: Prompt, reply: Reply, results: Sequence[ToolResult]) -> Prompt:
+def with_tool_results(prompt: Prompt, reply: ModelReply, results: Sequence[ToolResult]) -> Prompt:
     """The request that follows `prompt` once the calls of `reply` have run: the same dialogue,
-    then a turn of the model with what it said and asked for, then a turn with `results`."""
-    requests = [_request_line(result.call) for result in results]
-    said = "\n".join((reply.text, *requests)).strip()
-    asked = Turn(role=Role.MODEL, text=said)
-    outcomes = [_result_line(result) for result in results]
-    told = "\n".join(outcomes)
-    answered = Turn(role=Role.USER, text=told)
+    then the model's turn with what it said and asked for, then a turn with `results`."""
+    asked = ModelTurn(text=reply.text, provider_data=reply.provider_data)
+    answered = ToolTurn(results=tuple(results))
     turns = (*prompt.turns, asked, answered)
     return dataclasses.replace(prompt, turns=turns)
 

@@ -12,11 +12,10 @@ from typing import assert_never
 
 from kamerdyner.common.llm import (
     LLM,
-    GenerateResult,
     Incomplete,
     LLMError,
+    ModelReply,
     Prompt,
-    Reply,
     Role,
     Unavailable,
 )
@@ -114,7 +113,7 @@ class Chat:
         self._log.append(incoming)
         self._pending.append(incoming)
 
-    async def reply(self) -> GenerateResult:
+    async def reply(self) -> ModelReply | LLMError:
         """Answers the messages waiting for a reply; a full reply goes to memory together with the
         messages the model saw, and only those leave the waiting ones. On any other outcome the
         messages keep waiting, to be answered together with the next ones."""
@@ -126,7 +125,7 @@ class Chat:
         first = await self._llm.generate(prompt, TOOLS)
         result, tools_record = await self._finish_tools(prompt, first)
         match result:
-            case Reply(text=reply_text, grounded=grounded, provider_data=provider_data):
+            case ModelReply(text=reply_text, grounded=grounded, provider_data=provider_data):
                 answered_at = self._now()
                 # Search results may be shown and kept for the conversation, not archived or learned
                 # from: a grounded reply is ephemeral, and what the model thought about them, which
@@ -159,8 +158,8 @@ class Chat:
         return await self._memory.compact(keep_tokens)
 
     async def _finish_tools(
-        self, prompt: Prompt, first: GenerateResult
-    ) -> tuple[GenerateResult, str]:
+        self, prompt: Prompt, first: ModelReply | LLMError
+    ) -> tuple[ModelReply | LLMError, str]:
         """Takes the model's first response to the end: runs the tools it asked for and gets its
         answer, with no tools allowed any more. Returns that final result and the record of the
         tools to keep in front of the answer, empty when none ran. A tool that ran stays done
